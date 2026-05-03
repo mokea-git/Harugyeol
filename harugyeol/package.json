@@ -17,6 +17,8 @@
     "expo-router": "~6.0.23",
     "expo-status-bar": "~3.0.9",
     "nativewind": "^4.1.0",
+    "react-native-reanimated": "~3.17.0",
+    "react-native-worklets": "npm:react-native-worklets-core@latest",
     "react": "19.1.0",
     "react-native": "0.81.5",
     "react-native-purchases": "^8.0.0",
