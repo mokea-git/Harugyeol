@@ -1,0 +1,20 @@
+# 환경변수
+.env
+*.env.local
+
+# 의존성
+node_modules/
+harugyeol/node_modules/
+harugyeol-server/node_modules/
+
+# 빌드 결과물
+dist/
+harugyeol-server/dist/
+.expo/
+harugyeol/.expo/
+
+# drizzle 생성 파일
+harugyeol-server/drizzle/
+
+# OS
+.DS_Store
