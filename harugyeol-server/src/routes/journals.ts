@@ -4,10 +4,14 @@ import { requireAuth } from '../middleware/auth';
 import {
   createAnalysis,
   createJournal,
+  countJournalsThisMonth,
   findAnalysisByUserAndJournalId,
   getJournalById,
+  getSubscriptionStatus,
   listJournalsByUser,
 } from '../lib/sqlite';
+
+const FREE_MONTHLY_JOURNAL_LIMIT = 10;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -96,6 +100,19 @@ export async function journalsRoutes(fastify: FastifyInstance) {
 
       if (!content) {
         return reply.code(400).send({ error: 'content is required' });
+      }
+
+      // 무료 플랜 월 10개 제한
+      const subStatus = getSubscriptionStatus(user.id);
+      if (!subStatus.isPro) {
+        const monthCount = countJournalsThisMonth(user.id);
+        if (monthCount >= FREE_MONTHLY_JOURNAL_LIMIT) {
+          return reply.code(403).send({
+            error: `이번 달 무료 일기(${FREE_MONTHLY_JOURNAL_LIMIT}개)를 모두 사용했어요. PRO로 업그레이드하면 무제한으로 쓸 수 있어요.`,
+            code: 'JOURNAL_LIMIT_EXCEEDED',
+            plan: subStatus.plan,
+          });
+        }
       }
 
       // 요구사항: AI 분석 완료 전에는 저장 확정하지 않음

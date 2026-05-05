@@ -1,50 +1,79 @@
-import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
-import { db } from '../db';
-import { subscriptions, users } from '../db/schema';
+import { FastifyInstance } from 'fastify';
+import { requireAuth } from '../middleware/auth';
+import {
+  getSubscriptionStatus,
+  startTrial,
+  upgradeToPro,
+  downgradePlan,
+} from '../lib/sqlite';
 
-export async function subscriptionRoutes(app: FastifyInstance) {
-  const auth = { onRequest: [app.authenticate] };
+export async function subscriptionsRoutes(fastify: FastifyInstance) {
+  // GET /subscriptions/status
+  fastify.get(
+    '/subscriptions/status',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const status = getSubscriptionStatus(user.id);
+      return reply.send(status);
+    },
+  );
 
-  // RevenueCat 웹훅: 구독 상태 업데이트
-  app.post('/webhook', async (req, reply) => {
-    const secret = req.headers['x-revenuecat-secret'];
-    if (secret !== process.env.REVENUECAT_WEBHOOK_SECRET) {
-      return reply.status(401).send({ error: 'Unauthorized' });
-    }
+  // POST /subscriptions/trial — 7일 무료 체험 시작
+  fastify.post(
+    '/subscriptions/trial',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const current = getSubscriptionStatus(user.id);
 
-    const event = req.body as {
-      event: { type: string; app_user_id: string; expiration_at_ms?: number };
-    };
-    const { type, app_user_id, expiration_at_ms } = event.event;
+      // 이미 PRO이면 trial 필요 없음
+      if (current.plan === 'pro') {
+        return reply.send(current);
+      }
+      // 이미 trial 중이거나 만료 후 재신청 모두 허용 (재시작)
+      const status = startTrial(user.id);
+      return reply.send(status);
+    },
+  );
 
-    const status = type === 'INITIAL_PURCHASE' || type === 'RENEWAL' ? 'active' : 'expired';
-    const expiresAt = expiration_at_ms ? new Date(expiration_at_ms) : null;
+  // POST /subscriptions/webhook — RevenueCat 웹훅
+  // RevenueCat > Project > Webhooks 에서 이 URL 등록
+  fastify.post<{ Body: Record<string, unknown> }>(
+    '/subscriptions/webhook',
+    async (request, reply) => {
+      const event = request.body as any;
+      const eventType: string = event?.event?.type ?? '';
+      const userId: string | undefined =
+        event?.event?.app_user_id ??
+        event?.event?.original_app_user_id ??
+        event?.app_user_id;
 
-    await db
-      .update(subscriptions)
-      .set({ status, ...(expiresAt ? { expiresAt } : {}) })
-      .where(eq(subscriptions.rcCustomerId, app_user_id));
+      fastify.log.info({ eventType, userId }, 'RevenueCat webhook received');
 
-    // users.plan도 동기화
-    const sub = await db.query.subscriptions.findFirst({
-      where: eq(subscriptions.rcCustomerId, app_user_id),
-    });
-    if (sub) {
-      await db
-        .update(users)
-        .set({ plan: status === 'active' ? 'pro' : 'free' })
-        .where(eq(users.id, sub.userId));
-    }
+      if (!userId) {
+        return reply.code(400).send({ error: 'missing user id' });
+      }
 
-    return reply.status(200).send({ ok: true });
-  });
+      // 구독 활성화 이벤트
+      const activateEvents = [
+        'INITIAL_PURCHASE',
+        'RENEWAL',
+        'UNCANCELLATION',
+        'NON_RENEWING_PURCHASE',
+      ];
+      // 구독 비활성화 이벤트
+      const deactivateEvents = ['CANCELLATION', 'EXPIRATION', 'BILLING_ISSUE'];
 
-  app.get('/status', auth, async (req) => {
-    const { userId } = req.user as { userId: string };
-    const sub = await db.query.subscriptions.findFirst({
-      where: eq(subscriptions.userId, userId),
-    });
-    return sub ?? { status: 'inactive' };
-  });
+      if (activateEvents.includes(eventType)) {
+        upgradeToPro(userId);
+        fastify.log.info({ userId }, 'Plan upgraded to PRO');
+      } else if (deactivateEvents.includes(eventType)) {
+        downgradePlan(userId, 'free');
+        fastify.log.info({ userId }, 'Plan downgraded to free');
+      }
+
+      return reply.code(200).send({ received: true });
+    },
+  );
 }

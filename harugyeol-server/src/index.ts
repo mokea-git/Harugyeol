@@ -5,6 +5,7 @@ import { analysesRoutes } from './routes/analyses';
 import { coachRoutes } from './routes/coach';
 import { journalsRoutes } from './routes/journals';
 import { profilesRoutes } from './routes/profiles';
+import { subscriptionsRoutes } from './routes/subscriptions';
 
 const server = Fastify({
   logger: true,
@@ -27,6 +28,7 @@ async function start() {
   await server.register(coachRoutes);
   await server.register(journalsRoutes);
   await server.register(profilesRoutes);
+  await server.register(subscriptionsRoutes);
 
   const port = Number(process.env.PORT ?? 3000);
   const host = process.env.HOST ?? '0.0.0.0';

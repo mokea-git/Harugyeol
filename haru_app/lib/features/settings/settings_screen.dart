@@ -12,6 +12,7 @@ import '../../core/network/api_client.dart';
 import '../../core/theme/app_colors.dart';
 import '../auth/auth_service.dart';
 import '../auth/profile_service.dart';
+import '../subscription/subscription_api.dart';
 import 'settings_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -28,6 +29,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   );
 
   UserProfile? _profile;
+  SubscriptionStatus? _subStatus;
   bool _loading = true;
   bool _reminderEnabled = true;
   TimeOfDay _reminderTime = const TimeOfDay(hour: 21, minute: 0);
@@ -42,10 +44,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadProfile() async {
     try {
-      final profile = await ProfileService.instance.getProfile();
+      final results = await Future.wait([
+        ProfileService.instance.getProfile(),
+        SubscriptionApi.instance.getStatus(),
+      ]);
       if (mounted) {
         setState(() {
-          _profile = profile;
+          _profile = results[0] as UserProfile;
+          _subStatus = results[1] as SubscriptionStatus;
           _loading = false;
         });
       }
@@ -112,64 +118,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 16),
 
-              // ── PRO 업그레이드 배너 ─────────────────────────────────────
-              if (_profile?.isPro != true)
-                GestureDetector(
-                  onTap: () => context.push('/pro'),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.centerLeft,
-                        end: Alignment.centerRight,
-                        colors: [
-                          AppColors.primary.withValues(alpha: 0.08),
-                          AppColors.primarySurface.withValues(alpha: 0.5),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: AppColors.primary.withValues(alpha: 0.2),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.workspace_premium_rounded,
-                          color: AppColors.primary,
-                          size: 28,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'PRO로 업그레이드',
-                                style: GoogleFonts.notoSansKr(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.secondary,
-                                ),
-                              ),
-                              Text(
-                                '무제한 AI 분석 · 주간 리포트 · 코치 대화',
-                                style: GoogleFonts.notoSansKr(
-                                  fontSize: 12,
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Icon(
-                          Icons.chevron_right_rounded,
-                          color: AppColors.primary,
-                        ),
-                      ],
-                    ),
-                  ),
-                ).animate(delay: 200.ms).fadeIn(duration: 500.ms),
+              // ── 구독 배너 ─────────────────────────────────────────────
+              _SubscriptionBanner(status: _subStatus)
+                  .animate(delay: 200.ms)
+                  .fadeIn(duration: 500.ms),
 
               const SizedBox(height: 32),
 
@@ -217,7 +169,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SettingsTile(
                 icon: Icons.download_rounded,
                 label: '데이터 내보내기',
-                onTap: _exportData,
+                trailing: _subStatus?.isPro != true
+                    ? const _ProBadge()
+                    : null,
+                onTap: _subStatus?.isPro == true
+                    ? _exportData
+                    : () => context.push('/pro'),
               ),
               _SettingsTile(
                 icon: Icons.help_outline_rounded,
@@ -805,6 +762,158 @@ class _ToggleSwitch extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ─── Subscription Banner ─────────────────────────────────────────────────────
+
+class _SubscriptionBanner extends StatelessWidget {
+  final SubscriptionStatus? status;
+  const _SubscriptionBanner({this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = status;
+
+    if (s != null && s.plan == 'pro') {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1E3A34), Color(0xFF2D5244)],
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.workspace_premium_rounded,
+                  color: Color(0xFFFFD700), size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('하루결 PRO 이용 중',
+                    style: GoogleFonts.notoSansKr(
+                        fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white)),
+                Text('모든 기능을 무제한으로 이용하고 있어요',
+                    style: GoogleFonts.notoSansKr(fontSize: 12, color: Colors.white60)),
+              ]),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                  color: const Color(0xFFFFD700).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8)),
+              child: Text('PRO',
+                  style: GoogleFonts.notoSansKr(
+                      fontSize: 11, fontWeight: FontWeight.w800,
+                      color: const Color(0xFFFFD700))),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (s != null && s.isInTrial) {
+      return GestureDetector(
+        onTap: () => context.push('/pro'),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [
+              AppColors.primary.withValues(alpha: 0.1),
+              const Color(0xFFFFD700).withValues(alpha: 0.05),
+            ], begin: Alignment.centerLeft, end: Alignment.centerRight),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+          ),
+          child: Row(children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                  color: AppColors.primarySurface,
+                  borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.access_time_rounded,
+                  color: AppColors.primary, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('PRO 체험 중',
+                    style: GoogleFonts.notoSansKr(
+                        fontSize: 14, fontWeight: FontWeight.w700,
+                        color: AppColors.secondary)),
+                Text('${s.trialDaysLeft}일 후 자동으로 무료 전환돼요',
+                    style: GoogleFonts.notoSansKr(
+                        fontSize: 12, color: AppColors.textSecondary)),
+              ]),
+            ),
+            Text('D-${s.trialDaysLeft}',
+                style: GoogleFonts.notoSansKr(
+                    fontSize: 14, fontWeight: FontWeight.w800,
+                    color: AppColors.primary)),
+          ]),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => context.push('/pro'),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(begin: Alignment.centerLeft, end: Alignment.centerRight,
+            colors: [
+              AppColors.primary.withValues(alpha: 0.08),
+              AppColors.primarySurface.withValues(alpha: 0.5),
+            ]),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+        ),
+        child: Row(children: [
+          const Icon(Icons.workspace_premium_rounded, color: AppColors.primary, size: 28),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('PRO로 업그레이드',
+                  style: GoogleFonts.notoSansKr(
+                      fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.secondary)),
+              Text('무제한 AI 분석 · 주간 리포트 · 코치 대화',
+                  style: GoogleFonts.notoSansKr(fontSize: 12, color: AppColors.textSecondary)),
+            ]),
+          ),
+          const Icon(Icons.chevron_right_rounded, color: AppColors.primary),
+        ]),
+      ),
+    );
+  }
+}
+
+// ─── Pro Badge ────────────────────────────────────────────────────────────────
+
+class _ProBadge extends StatelessWidget {
+  const _ProBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [Color(0xFFFFD700), Color(0xFFFFA726)]),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text('PRO',
+          style: GoogleFonts.notoSansKr(
+              fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white)),
     );
   }
 }

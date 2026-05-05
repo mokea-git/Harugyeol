@@ -1,9 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../subscription/subscription_api.dart';
 import 'coach_api.dart';
 
 class CoachScreen extends StatefulWidget {
@@ -23,6 +25,7 @@ class _CoachScreenState extends State<CoachScreen> {
   bool _sending = false;
   String? _historyError;
   List<CoachMessage> _messages = [];
+  SubscriptionStatus? _subStatus;
 
   @override
   void initState() {
@@ -31,7 +34,13 @@ class _CoachScreenState extends State<CoachScreen> {
       final has = _controller.text.trim().isNotEmpty;
       if (has != _hasText) setState(() => _hasText = has);
     });
+    _loadStatus();
     _loadHistory();
+  }
+
+  Future<void> _loadStatus() async {
+    final status = await SubscriptionApi.instance.getStatus();
+    if (mounted) setState(() => _subStatus = status);
   }
 
   @override
@@ -114,18 +123,102 @@ class _CoachScreenState extends State<CoachScreen> {
       _jumpToBottom(animated: true);
     } on DioException catch (e) {
       if (!mounted) return;
-      setState(() => _sending = false);
+      setState(() {
+        _sending = false;
+        // 낙관적으로 추가했던 user 메시지 제거
+        if (_messages.isNotEmpty && _messages.last.isUser) {
+          _messages = _messages.sublist(0, _messages.length - 1);
+        }
+      });
+      final code = (e.response?.data as Map?)?['code'] as String?;
       final status = e.response?.statusCode;
-      _showError(
-        status == 401
-            ? '로그인이 만료됐어요. 다시 로그인해 주세요'
-            : '메시지 전송에 실패했어요',
-      );
+      if (status == 403 && code == 'COACH_LIMIT_EXCEEDED') {
+        _showLimitDialog();
+      } else {
+        _showError(
+          status == 401
+              ? '로그인이 만료됐어요. 다시 로그인해 주세요'
+              : '메시지 전송에 실패했어요',
+        );
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() => _sending = false);
       _showError('메시지 전송에 실패했어요');
     }
+  }
+
+  void _showLimitDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFFD700), Color(0xFFFFA726)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Icon(
+                  Icons.workspace_premium_rounded,
+                  color: Colors.white,
+                  size: 32,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                '오늘 대화를 모두 사용했어요',
+                style: GoogleFonts.notoSansKr(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'PRO로 업그레이드하면\nAI 코치와 무제한으로 대화할 수 있어요',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.notoSansKr(
+                  fontSize: 14,
+                  color: AppColors.textSecondary,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('나중에'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        context.push('/pro');
+                      },
+                      child: const Text('PRO 보기'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _confirmClear() async {
