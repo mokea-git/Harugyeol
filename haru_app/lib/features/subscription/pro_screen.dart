@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:purchases_flutter/purchases_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import 'subscription_api.dart';
+import 'purchase_service.dart';
 
 class ProScreen extends StatefulWidget {
   const ProScreen({super.key});
@@ -16,6 +18,39 @@ class ProScreen extends StatefulWidget {
 class _ProScreenState extends State<ProScreen> {
   bool _isYearly = true;
   bool _starting = false;
+  bool _loadingOfferings = true;
+  Package? _monthlyPackage;
+  Package? _annualPackage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOfferings();
+  }
+
+  Future<void> _loadOfferings() async {
+    final offerings = await PurchaseService.instance.getOfferings();
+    if (!mounted) return;
+    if (offerings != null) {
+      final packages = offerings.current?.availablePackages ?? [];
+      Package? monthly;
+      Package? annual;
+      for (final pkg in packages) {
+        if (pkg.packageType == PackageType.monthly) {
+          monthly = pkg;
+        } else if (pkg.packageType == PackageType.annual) {
+          annual = pkg;
+        }
+      }
+      setState(() {
+        _monthlyPackage = monthly;
+        _annualPackage = annual;
+        _loadingOfferings = false;
+      });
+    } else {
+      setState(() => _loadingOfferings = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -220,6 +255,8 @@ class _ProScreenState extends State<ProScreen> {
                         child: _PriceCard(
                           key: ValueKey(_isYearly),
                           isYearly: _isYearly,
+                          monthlyPrice: _monthlyPackage?.storeProduct.priceString,
+                          annualPrice: _annualPackage?.storeProduct.priceString,
                         ),
                       ),
 
@@ -268,7 +305,19 @@ class _ProScreenState extends State<ProScreen> {
                         ),
                       ).animate(delay: 900.ms).fadeIn(duration: 400.ms),
 
-                      const SizedBox(height: 24),
+                      // Restore purchases button
+                      TextButton(
+                        onPressed: _starting ? null : _restore,
+                        child: Text(
+                          '구매 복원',
+                          style: GoogleFonts.notoSansKr(
+                            fontSize: 13,
+                            color: Colors.white38,
+                          ),
+                        ),
+                      ).animate(delay: 950.ms).fadeIn(duration: 400.ms),
+
+                      const SizedBox(height: 12),
 
                       // Compare plans
                       GestureDetector(
@@ -293,7 +342,7 @@ class _ProScreenState extends State<ProScreen> {
                             ],
                           ),
                         ),
-                      ).animate(delay: 950.ms).fadeIn(duration: 400.ms),
+                      ).animate(delay: 1000.ms).fadeIn(duration: 400.ms),
 
                       const SizedBox(height: 40),
                     ],
@@ -308,6 +357,37 @@ class _ProScreenState extends State<ProScreen> {
   }
 
   Future<void> _startTrial(BuildContext context) async {
+    // Determine the selected package
+    final selectedPackage = _isYearly ? _annualPackage : _monthlyPackage;
+
+    // If RevenueCat is configured and we have a package, use real IAP
+    if (selectedPackage != null) {
+      setState(() => _starting = true);
+      final result = await PurchaseService.instance.purchasePackage(selectedPackage);
+      if (!mounted) return;
+      setState(() => _starting = false);
+
+      if (result.cancelled) {
+        // User cancelled — do nothing
+        return;
+      }
+      if (result.success) {
+        _showSuccessSheet(context);
+      } else if (result.error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.error!, style: GoogleFonts.notoSansKr(fontSize: 14)),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Fallback: mock trial via server (RevenueCat not configured)
     setState(() => _starting = true);
     try {
       await SubscriptionApi.instance.startTrial();
@@ -331,6 +411,27 @@ class _ProScreenState extends State<ProScreen> {
       _showSuccessSheet(context);
     } finally {
       if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  Future<void> _restore() async {
+    setState(() => _starting = true);
+    final result = await PurchaseService.instance.restorePurchases();
+    if (!mounted) return;
+    setState(() => _starting = false);
+    if (result.success) {
+      _showSuccessSheet(context);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+          result.restored ? '복원할 구매 내역이 없어요' : '복원에 실패했어요',
+          style: GoogleFonts.notoSansKr(fontSize: 14),
+        ),
+        backgroundColor: AppColors.error,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ));
     }
   }
 
@@ -521,7 +622,9 @@ const _features = [
 
 class _PriceCard extends StatelessWidget {
   final bool isYearly;
-  const _PriceCard({super.key, required this.isYearly});
+  final String? monthlyPrice;
+  final String? annualPrice;
+  const _PriceCard({super.key, required this.isYearly, this.monthlyPrice, this.annualPrice});
 
   @override
   Widget build(BuildContext context) {
@@ -540,7 +643,7 @@ class _PriceCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '₩39,000',
+                  annualPrice ?? '₩39,000',
                   style: GoogleFonts.notoSansKr(
                     fontSize: 32,
                     fontWeight: FontWeight.w800,
@@ -574,7 +677,7 @@ class _PriceCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '₩4,900',
+                  monthlyPrice ?? '₩4,900',
                   style: GoogleFonts.notoSansKr(
                     fontSize: 32,
                     fontWeight: FontWeight.w800,

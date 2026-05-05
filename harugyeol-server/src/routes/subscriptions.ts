@@ -37,6 +37,17 @@ export async function subscriptionsRoutes(fastify: FastifyInstance) {
     },
   );
 
+  // POST /subscriptions/activate — 앱에서 결제 성공 후 즉시 서버 플랜 업데이트
+  fastify.post(
+    '/subscriptions/activate',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const status = upgradeToPro(user.id);
+      return reply.send(status);
+    },
+  );
+
   // POST /subscriptions/webhook — RevenueCat 웹훅
   // RevenueCat > Project > Webhooks 에서 이 URL 등록
   fastify.post<{ Body: Record<string, unknown> }>(
