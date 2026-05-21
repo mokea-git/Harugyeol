@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { requireAuth } from '../middleware/auth';
 import {
+  ensureProfileFromAuthUser,
   getSubscriptionStatus,
   startTrial,
   upgradeToPro,
@@ -25,6 +26,7 @@ export async function subscriptionsRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth },
     async (request, reply) => {
       const user = (request as any).user;
+      ensureProfileFromAuthUser({ id: user.id, email: user.email, user_metadata: user.user_metadata });
       const current = getSubscriptionStatus(user.id);
 
       // 이미 PRO이면 trial 필요 없음
@@ -43,6 +45,7 @@ export async function subscriptionsRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth },
     async (request, reply) => {
       const user = (request as any).user;
+      ensureProfileFromAuthUser({ id: user.id, email: user.email, user_metadata: user.user_metadata });
       const status = upgradeToPro(user.id);
       return reply.send(status);
     },

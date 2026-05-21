@@ -417,7 +417,7 @@ function pickMetaImage(meta: Record<string, unknown>): string | null {
 export function getProfileByUserId(userId: string): ProfileRecord | null {
   const row = db
     .prepare(
-      `SELECT user_id, email, name, image_url, plan, created_at, updated_at
+      `SELECT user_id, email, name, image_url, plan, trial_started_at, created_at, updated_at
        FROM profiles
        WHERE user_id = ?`,
     )

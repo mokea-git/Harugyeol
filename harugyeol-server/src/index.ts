@@ -14,6 +14,16 @@ const server = Fastify({
 });
 
 async function start() {
+  // Content-Type: application/json이지만 body가 비어있는 요청 허용 (빈 {}로 처리)
+  server.addContentTypeParser('application/json', { parseAs: 'string' }, function (_req, body, done) {
+    if (!body) return done(null, {});
+    try {
+      done(null, JSON.parse(body));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
+
   // CORS — Flutter 앱 + 웹에서 접근 허용
   await server.register(cors, {
     origin: true,

@@ -54,7 +54,7 @@ class SubscriptionApi {
 
   /// RevenueCat 결제 성공 후 서버 플랜 즉시 동기화
   Future<SubscriptionStatus> activate() async {
-    final res = await ApiClient.instance.dio.post('/subscriptions/activate');
+    final res = await ApiClient.instance.dio.post('/subscriptions/activate', data: {});
     final data = (res.data as Map).cast<String, dynamic>();
     final status = SubscriptionStatus.fromJson(data);
     await ProfileService.instance.getProfile(forceRefresh: true);
@@ -63,7 +63,7 @@ class SubscriptionApi {
 
   /// 7일 무료 체험 시작
   Future<SubscriptionStatus> startTrial() async {
-    final res = await ApiClient.instance.dio.post('/subscriptions/trial');
+    final res = await ApiClient.instance.dio.post('/subscriptions/trial', data: {});
     final data = (res.data as Map).cast<String, dynamic>();
     final status = SubscriptionStatus.fromJson(data);
     // 프로필 캐시 갱신

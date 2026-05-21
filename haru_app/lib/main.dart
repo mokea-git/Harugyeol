@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_naver_map/flutter_naver_map.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'core/ads/ad_service.dart';
 import 'core/network/api_client.dart';
 import 'features/subscription/purchase_service.dart';
 import 'app.dart';
@@ -21,8 +23,16 @@ Future<void> main() async {
   // API 클라이언트 초기화
   ApiClient.instance.init();
 
+  // 네이버 지도 초기화
+  await NaverMapSdk.instance.initialize(
+    clientId: dotenv.env['NAVER_MAP_CLIENT_ID']!,
+  );
+
   // RevenueCat 초기화
   await PurchaseService.instance.configure();
+
+  // AdMob 초기화
+  await AdService.instance.initialize();
 
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 

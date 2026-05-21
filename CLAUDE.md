@@ -16,11 +16,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## 모노레포 구조 (예정)
+## 모노레포 구조
 
 ```
 Harugyeol/
-├── harugyeol/          # React Native (Expo) 앱
+├── harugyeol/          # Flutter 앱
 └── harugyeol-server/   # Fastify 백엔드 서버
 ```
 
@@ -28,23 +28,33 @@ Harugyeol/
 
 ## 앱 (`harugyeol/`)
 
-**스택**: React Native · Expo SDK 51+ · TypeScript · Expo Router · NativeWind · Zustand · RevenueCat
+**스택**: Flutter · Dart · Riverpod · GoRouter · Dio · flutter_secure_storage · table_calendar · RevenueCat
 
 ### 개발 명령어
 
 ```bash
-npx expo start          # 개발 서버 시작
-npx expo start --android
-npx expo start --ios
-npx expo run:android    # 네이티브 빌드 (직접 실행)
+flutter run                     # 개발 실행
+flutter run --release           # 릴리즈 빌드 테스트
+flutter build apk --release     # APK 빌드
+flutter build appbundle         # 구글플레이 제출용
 ```
 
-### 빌드 (EAS)
+### 앱 구조
 
-```bash
-eas build --profile preview --platform android   # 테스트 APK
-eas build --profile production --platform android
-eas submit --platform android                     # 구글플레이 제출
+```
+lib/
+├── main.dart / app.dart          # 진입점 + GoRouter
+├── core/
+│   ├── constants/                # colors.dart, api.dart
+│   ├── network/dio_client.dart   # JWT 인터셉터
+│   └── storage/secure_storage.dart
+├── features/
+│   ├── auth/                     # 로그인·회원가입
+│   ├── journal/                  # 일기 목록·작성
+│   ├── analysis/                 # AI 분석 결과
+│   ├── coach/                    # AI 코치 채팅
+│   └── subscription/             # RevenueCat 플랜
+└── shared/themes/app_theme.dart
 ```
 
 ### 브랜드 컬러

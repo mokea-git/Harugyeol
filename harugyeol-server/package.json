@@ -1,33 +1,29 @@
 {
   "name": "harugyeol-server",
-  "version": "0.1.0",
-  "private": true,
+  "version": "1.0.0",
+  "description": "하루결 AI 백엔드 서버",
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "ts-node src/index.ts",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "db:generate": "drizzle-kit generate:pg",
-    "db:push": "drizzle-kit push:pg"
+    "start": "node dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.36.0",
+    "@anthropic-ai/sdk": "^0.30.0",
     "@fastify/cors": "^9.0.0",
-    "@fastify/jwt": "^8.0.0",
-    "bcrypt": "^5.1.1",
-    "dotenv": "^16.4.5",
-    "drizzle-orm": "^0.30.0",
-    "fastify": "^4.26.2",
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.0",
+    "fastify": "^4.28.0",
     "node-cron": "^3.0.3",
-    "pg": "^8.11.3",
-    "resend": "^3.2.0"
-  },
-  "devDependencies": {
-    "@types/bcrypt": "^5.0.2",
-    "@types/node": "^20.11.28",
-    "@types/node-cron": "^3.0.11",
-    "@types/pg": "^8.11.2",
-    "drizzle-kit": "^0.20.14",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.2"
+    "resend": "^3.5.0"
   }
 }
