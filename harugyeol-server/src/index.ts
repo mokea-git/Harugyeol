@@ -6,6 +6,7 @@ import { coachRoutes } from './routes/coach';
 import { journalsRoutes } from './routes/journals';
 import { profilesRoutes } from './routes/profiles';
 import { subscriptionsRoutes } from './routes/subscriptions';
+import { registerPgSyncCron } from './cron/pg-full-sync';
 
 const server = Fastify({
   logger: true,
@@ -18,7 +19,7 @@ async function start() {
   server.addContentTypeParser('application/json', { parseAs: 'string' }, function (_req, body, done) {
     if (!body) return done(null, {});
     try {
-      done(null, JSON.parse(body));
+      done(null, JSON.parse(body as string));
     } catch (err) {
       done(err as Error, undefined);
     }
@@ -45,6 +46,9 @@ async function start() {
 
   await server.listen({ port, host });
   console.log(`🚀 하루결 서버 실행 중 — http://${host}:${port}`);
+
+  // PostgreSQL 백업 크론 (POSTGRES_URL 설정 시 활성화)
+  registerPgSyncCron();
 }
 
 start().catch((err) => {

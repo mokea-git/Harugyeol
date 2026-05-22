@@ -2,6 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import {
+  pgDeleteCoachMessages,
+  pgDeleteJournal,
+  pgUpsertAnalysis,
+  pgUpsertCoachMessage,
+  pgUpsertJournal,
+  pgUpsertProfile,
+} from './postgres';
+
+/** fire-and-forget 백업 — 실패해도 주 요청에 영향 없음 */
+function bg(promise: Promise<void>): void {
+  promise.catch((err) => console.error('[PG backup]', (err as Error).message));
+}
 
 type SqliteAnalysisRow = {
   id: string;
@@ -200,13 +213,9 @@ export function createJournal(input: {
      VALUES (?, ?, ?, ?, ?)`,
   ).run(id, input.userId, input.content, journalDate, createdAt);
 
-  return {
-    id,
-    user_id: input.userId,
-    content: input.content,
-    date: journalDate,
-    created_at: createdAt,
-  };
+  const record = { id, user_id: input.userId, content: input.content, date: journalDate, created_at: createdAt };
+  bg(pgUpsertJournal(record));
+  return record;
 }
 
 export function listJournalsByUser(userId: string, limit = 100): JournalRecord[] {
@@ -273,19 +282,24 @@ export function createAnalysis(input: {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
 
+  const emotionsJson = JSON.stringify(input.emotions);
+  const habitsJson = JSON.stringify(input.habits);
+
   db.prepare(
     `INSERT INTO analyses (id, journal_id, user_id, emotions_json, habits_json, feedback, summary, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+  ).run(id, input.journalId, input.userId, emotionsJson, habitsJson, input.feedback, input.summary, createdAt);
+
+  bg(pgUpsertAnalysis({
     id,
-    input.journalId,
-    input.userId,
-    JSON.stringify(input.emotions),
-    JSON.stringify(input.habits),
-    input.feedback,
-    input.summary,
-    createdAt,
-  );
+    journal_id: input.journalId,
+    user_id: input.userId,
+    emotions_json: emotionsJson,
+    habits_json: habitsJson,
+    feedback: input.feedback,
+    summary: input.summary,
+    created_at: createdAt,
+  }));
 
   return {
     id,
@@ -350,12 +364,9 @@ export function insertCoachMessage(
     )
     .run(userId, role, content, createdAt);
 
-  return {
-    id: Number(result.lastInsertRowid),
-    role,
-    content,
-    created_at: createdAt,
-  };
+  const id = Number(result.lastInsertRowid);
+  bg(pgUpsertCoachMessage({ id, user_id: userId, role, content, created_at: createdAt }));
+  return { id, role, content, created_at: createdAt };
 }
 
 export function listCoachMessages(
@@ -383,6 +394,7 @@ export function listCoachMessages(
 
 export function clearCoachMessages(userId: string): void {
   db.prepare(`DELETE FROM coach_messages WHERE user_id = ?`).run(userId);
+  bg(pgDeleteCoachMessages(userId));
 }
 
 function toProfileRecord(row: SqliteProfileRow): ProfileRecord {
@@ -445,16 +457,10 @@ export function ensureProfileFromAuthUser(authUser: {
     db.prepare(
       `INSERT INTO profiles (user_id, email, name, image_url, plan, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      authUser.id,
-      fallbackEmail,
-      fallbackName,
-      fallbackImage,
-      'free',
-      now,
-      now,
-    );
-    return getProfileByUserId(authUser.id)!;
+    ).run(authUser.id, fallbackEmail, fallbackName, fallbackImage, 'free', now, now);
+    const created = getProfileByUserId(authUser.id)!;
+    bg(pgUpsertProfile(created));
+    return created;
   }
 
   const nextEmail = fallbackEmail || existing.email;
@@ -468,7 +474,9 @@ export function ensureProfileFromAuthUser(authUser: {
      WHERE user_id = ?`,
   ).run(nextEmail, nextName, nextImage, now, authUser.id);
 
-  return getProfileByUserId(authUser.id)!;
+  const updated = getProfileByUserId(authUser.id)!;
+  bg(pgUpsertProfile(updated));
+  return updated;
 }
 
 // ── Subscription helpers ────────────────────────────────────────────────────
@@ -507,6 +515,8 @@ export function startTrial(userId: string): SubscriptionStatus {
   db.prepare(
     `UPDATE profiles SET plan = 'trial', trial_started_at = ?, updated_at = ? WHERE user_id = ?`,
   ).run(now, now, userId);
+  const profile = getProfileByUserId(userId);
+  if (profile) bg(pgUpsertProfile(profile));
   return getSubscriptionStatus(userId);
 }
 
@@ -515,6 +525,8 @@ export function upgradeToPro(userId: string): SubscriptionStatus {
   db.prepare(
     `UPDATE profiles SET plan = 'pro', updated_at = ? WHERE user_id = ?`,
   ).run(now, userId);
+  const profile = getProfileByUserId(userId);
+  if (profile) bg(pgUpsertProfile(profile));
   return getSubscriptionStatus(userId);
 }
 
@@ -523,6 +535,8 @@ export function downgradePlan(userId: string, plan: 'free'): void {
   db.prepare(
     `UPDATE profiles SET plan = ?, updated_at = ? WHERE user_id = ?`,
   ).run(plan, now, userId);
+  const profile = getProfileByUserId(userId);
+  if (profile) bg(pgUpsertProfile(profile));
 }
 
 /** 이번 달 일기 작성 횟수 */
@@ -566,5 +580,7 @@ export function updateProfileFields(
      WHERE user_id = ?`,
   ).run(nextName, nextAvatar, now, userId);
 
-  return getProfileByUserId(userId)!;
+  const result = getProfileByUserId(userId)!;
+  bg(pgUpsertProfile(result));
+  return result;
 }

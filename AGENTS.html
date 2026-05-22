@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Repository Guidelines — Harugyeol</title>
+  <link rel="stylesheet" href="assets/docs.css">
+</head>
+<body>
+
+<h1>Repository Guidelines</h1>
+
+<h2>Project Structure &amp; Module Organization</h2>
+<p>This repository is a small monorepo with two active apps:</p>
+<ul>
+  <li><code>haru_app/</code>: Flutter client (<code>lib/core</code> for shared infra, <code>lib/features</code> for feature modules, <code>test/</code> for widget tests).</li>
+  <li><code>harugyeol-server/</code>: Fastify + TypeScript API (<code>src/routes</code>, <code>src/middleware</code>, <code>src/lib</code>).</li>
+  <li><code>docs/</code>: product and architecture context (<a href="docs/harugyeol_context.html">docs/harugyeol_context.html</a>).</li>
+  <li><code>assets/</code>: shared design assets.</li>
+</ul>
+<p>Keep feature-specific code inside each app's feature folder; avoid cross-app imports.</p>
+
+<hr>
+
+<h2>Build, Test, and Development Commands</h2>
+<p>Run commands from each subproject directory.</p>
+
+<h3>Client (<code>haru_app</code>)</h3>
+<ul>
+  <li><code>flutter pub get</code>: install dependencies.</li>
+  <li><code>flutter run</code>: launch app in debug.</li>
+  <li><code>flutter analyze</code>: static analysis with <code>flutter_lints</code>.</li>
+  <li><code>flutter test</code>: run widget/unit tests.</li>
+</ul>
+
+<h3>Server (<code>harugyeol-server</code>)</h3>
+<ul>
+  <li><code>npm ci</code>: install dependencies from lockfile.</li>
+  <li><code>npm run dev</code>: run Fastify with <code>ts-node-dev</code>.</li>
+  <li><code>npm run build</code>: compile TypeScript to <code>dist/</code>.</li>
+  <li><code>npm run start</code>: run compiled server.</li>
+</ul>
+
+<hr>
+
+<h2>Coding Style &amp; Naming Conventions</h2>
+<ul>
+  <li>Dart: follow <code>flutter_lints</code>; 2-space indentation; <code>snake_case.dart</code> filenames; <code>PascalCase</code> widget/class names.</li>
+  <li>TypeScript: strict mode enabled; 2-space indentation; <code>camelCase</code> variables/functions; <code>PascalCase</code> types; keep route handlers thin and move shared logic to <code>src/lib</code>.</li>
+  <li>Prefer small, single-purpose modules (one route domain per file in <code>src/routes</code>).</li>
+  <li>Authentication policy: use Supabase only for OAuth sign-in/token verification. Do not add product/user data writes to Supabase DB.</li>
+  <li>Data policy: store user profile fields (image, name, email) in server-side SQLite managed by <code>harugyeol-server</code>.</li>
+</ul>
+
+<hr>
+
+<h2>Testing Guidelines</h2>
+<ul>
+  <li>Flutter uses <code>flutter_test</code>; place tests under <code>haru_app/test</code> with <code>*_test.dart</code> naming.</li>
+  <li>Add or update tests when changing UI state, routing, or API integration behavior.</li>
+  <li>Server currently has no formal test suite; at minimum, validate changes via <code>npm run build</code>, then smoke-test endpoints (<code>/health</code>, modified routes).</li>
+</ul>
+
+<hr>
+
+<h2>Commit &amp; Pull Request Guidelines</h2>
+<p>Recent history follows Conventional Commits (<code>feat:</code>, <code>fix:</code>, <code>chore:</code>), often with Korean summaries. Keep this format.</p>
+<p>PRs should include:</p>
+<ul>
+  <li>concise change summary and scope,</li>
+  <li>linked issue/task,</li>
+  <li>test evidence (command output or screenshots for UI),</li>
+  <li>notes for env/config changes (<code>.env</code>, Supabase OAuth keys, SQLite path/migrations, API keys).</li>
+</ul>
+
+<hr>
+
+<h2>Security &amp; Configuration Tips</h2>
+<ul>
+  <li>Never commit real secrets; use <code>harugyeol-server/.env.example</code> as the template.</li>
+  <li>Use Supabase credentials for OAuth only; avoid using Supabase DB/service-role for application data.</li>
+  <li>Keep OAuth and API keys server-only; do not expose them to Flutter client code.</li>
+</ul>
+
+</body>
+</html>
