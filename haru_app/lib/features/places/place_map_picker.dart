@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_naver_map/flutter_naver_map.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme/app_colors.dart';
 import 'places_service.dart';
@@ -34,13 +34,12 @@ class PlaceMapPicker extends StatefulWidget {
 }
 
 class _PlaceMapPickerState extends State<PlaceMapPicker> {
-  late NLatLng _center;
+  late LatLng _center;
   late int _radius;
   bool _gpsReady = false;
   bool _loadingGps = false;
 
-  NaverMapController? _mapController;
-  NCircleOverlay? _circleOverlay;
+  GoogleMapController? _mapController;
 
   // 검색
   bool _isSearching = false;
@@ -55,10 +54,10 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
   void initState() {
     super.initState();
     if (widget.initialLat != null && widget.initialLng != null) {
-      _center = NLatLng(widget.initialLat!, widget.initialLng!);
+      _center = LatLng(widget.initialLat!, widget.initialLng!);
       _gpsReady = true;
     } else {
-      _center = const NLatLng(37.5665, 126.9780); // 서울 (GPS 전 임시)
+      _center = const LatLng(37.5665, 126.9780); // 서울 (GPS 전 임시)
       _initGps();
     }
     _radius = widget.initialRadius;
@@ -74,31 +73,10 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
     final pos = await PlacesService.getCurrentPosition();
     if (!mounted) return;
     if (pos != null) {
-      _center = NLatLng(pos.latitude, pos.longitude);
-      _mapController?.updateCamera(
-        NCameraUpdate.scrollAndZoomTo(target: _center),
-      );
+      _center = LatLng(pos.latitude, pos.longitude);
+      _mapController?.animateCamera(CameraUpdate.newLatLng(_center));
     }
     setState(() => _gpsReady = true);
-    await _updateCircleOverlay();
-  }
-
-  Future<void> _addCircleOverlay() async {
-    _circleOverlay = NCircleOverlay(
-      id: 'radius_circle',
-      center: _center,
-      radius: _radius.toDouble(),
-      color: AppColors.primary.withValues(alpha: 0.15),
-      outlineColor: AppColors.primary,
-      outlineWidth: 2,
-    );
-    await _mapController?.addOverlay(_circleOverlay!);
-  }
-
-  Future<void> _updateCircleOverlay() async {
-    if (_circleOverlay == null) return;
-    _circleOverlay!.setCenter(_center);
-    _circleOverlay!.setRadius(_radius.toDouble());
   }
 
   Future<void> _moveToGps() async {
@@ -107,21 +85,18 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
     if (!mounted) return;
     setState(() => _loadingGps = false);
     if (pos != null) {
-      final point = NLatLng(pos.latitude, pos.longitude);
+      final point = LatLng(pos.latitude, pos.longitude);
       setState(() => _center = point);
-      _mapController?.updateCamera(
-        NCameraUpdate.scrollAndZoomTo(target: point),
-      );
-      await _updateCircleOverlay();
+      _mapController?.animateCamera(CameraUpdate.newLatLng(point));
     }
   }
 
   void _zoomIn() {
-    _mapController?.updateCamera(NCameraUpdate.zoomIn());
+    _mapController?.animateCamera(CameraUpdate.zoomIn());
   }
 
   void _zoomOut() {
-    _mapController?.updateCamera(NCameraUpdate.zoomOut());
+    _mapController?.animateCamera(CameraUpdate.zoomOut());
   }
 
   Future<void> _doSearch(String query) async {
@@ -146,11 +121,15 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
         ),
       );
       if (!mounted) return;
-      final list = (res.data as List).map((e) => _SearchResult(
-            name: e['display_name'] as String,
-            lat: double.parse(e['lat'] as String),
-            lng: double.parse(e['lon'] as String),
-          )).toList();
+      final list = (res.data as List)
+          .map(
+            (e) => _SearchResult(
+              name: e['display_name'] as String,
+              lat: double.parse(e['lat'] as String),
+              lng: double.parse(e['lon'] as String),
+            ),
+          )
+          .toList();
       setState(() => _searchResults = list);
     } catch (_) {
       // 검색 실패 시 빈 결과
@@ -160,17 +139,14 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
   }
 
   void _selectResult(_SearchResult result) {
-    final point = NLatLng(result.lat, result.lng);
+    final point = LatLng(result.lat, result.lng);
     setState(() {
       _center = point;
       _isSearching = false;
       _searchResults = [];
       _searchCtrl.clear();
     });
-    _mapController?.updateCamera(
-      NCameraUpdate.scrollAndZoomTo(target: point),
-    );
-    _updateCircleOverlay();
+    _mapController?.animateCamera(CameraUpdate.newLatLng(point));
     FocusScope.of(context).unfocus();
   }
 
@@ -195,13 +171,18 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                child: Row(children: [
-                  _FloatingBtn(
-                    onTap: () => Navigator.pop(context),
-                    child: const Icon(Icons.arrow_back_ios_new_rounded,
-                        size: 20, color: AppColors.textPrimary),
-                  ),
-                ]),
+                child: Row(
+                  children: [
+                    _FloatingBtn(
+                      onTap: () => Navigator.pop(context),
+                      child: const Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        size: 20,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               const Expanded(
                 child: Center(
@@ -210,9 +191,13 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
                     children: [
                       CircularProgressIndicator(color: AppColors.primary),
                       SizedBox(height: 16),
-                      Text('현재 위치를 가져오는 중...',
-                          style: TextStyle(
-                              color: AppColors.textSecondary, fontSize: 14)),
+                      Text(
+                        '현재 위치를 가져오는 중...',
+                        style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 14,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -227,31 +212,30 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
-          // ── 네이버 지도 ───────────────────────────────────────────────────────
-          NaverMap(
-            options: NaverMapViewOptions(
-              initialCameraPosition: NCameraPosition(
-                target: _center,
-                zoom: 16,
+          // ── 구글 지도 ───────────────────────────────────────────────────────
+          GoogleMap(
+            initialCameraPosition: CameraPosition(target: _center, zoom: 16),
+            myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+            compassEnabled: false,
+            mapToolbarEnabled: false,
+            zoomControlsEnabled: false,
+            padding: EdgeInsets.only(bottom: bottomPad + 280),
+            circles: {
+              Circle(
+                circleId: const CircleId('radius_circle'),
+                center: _center,
+                radius: _radius.toDouble(),
+                fillColor: AppColors.primary.withValues(alpha: 0.15),
+                strokeColor: AppColors.primary,
+                strokeWidth: 2,
               ),
-              compassEnable: false,
-              scaleBarEnable: false,
-              logoAlign: NLogoAlign.leftBottom,
-              logoMargin: EdgeInsets.only(
-                left: 12,
-                bottom: bottomPad + 280,
-              ),
-            ),
-            onMapReady: (controller) async {
-              _mapController = controller;
-              await _addCircleOverlay();
             },
-            onCameraIdle: () async {
-              if (_mapController == null) return;
-              final pos = await _mapController!.getCameraPosition();
-              if (!mounted) return;
-              setState(() => _center = pos.target);
-              await _updateCircleOverlay();
+            onMapCreated: (controller) {
+              _mapController = controller;
+            },
+            onCameraMove: (position) {
+              setState(() => _center = position.target);
             },
           ),
 
@@ -311,8 +295,7 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
                           },
                           child: Container(
                             height: 44,
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 14),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(14),
@@ -324,67 +307,78 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
                               ],
                             ),
                             child: _isSearching
-                                ? Row(children: [
-                                    const Icon(Icons.search_rounded,
-                                        size: 18, color: AppColors.primary),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _searchCtrl,
-                                        autofocus: true,
-                                        decoration: InputDecoration(
-                                          hintText: '장소, 주소 검색',
-                                          hintStyle: GoogleFonts.notoSansKr(
-                                            fontSize: 13,
-                                            color: AppColors.textHint,
-                                          ),
-                                          border: InputBorder.none,
-                                          isDense: true,
-                                          contentPadding: EdgeInsets.zero,
-                                        ),
-                                        style: GoogleFonts.notoSansKr(
-                                          fontSize: 13,
-                                          color: AppColors.textPrimary,
-                                        ),
-                                        textInputAction:
-                                            TextInputAction.search,
-                                        onSubmitted: _doSearch,
-                                        onChanged: (_) => setState(() {}),
+                                ? Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.search_rounded,
+                                        size: 18,
+                                        color: AppColors.primary,
                                       ),
-                                    ),
-                                    if (_searchLoading)
-                                      const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _searchCtrl,
+                                          autofocus: true,
+                                          decoration: InputDecoration(
+                                            hintText: '장소, 주소 검색',
+                                            hintStyle: GoogleFonts.notoSansKr(
+                                              fontSize: 13,
+                                              color: AppColors.textHint,
+                                            ),
+                                            border: InputBorder.none,
+                                            isDense: true,
+                                            contentPadding: EdgeInsets.zero,
+                                          ),
+                                          style: GoogleFonts.notoSansKr(
+                                            fontSize: 13,
+                                            color: AppColors.textPrimary,
+                                          ),
+                                          textInputAction:
+                                              TextInputAction.search,
+                                          onSubmitted: _doSearch,
+                                          onChanged: (_) => setState(() {}),
+                                        ),
+                                      ),
+                                      if (_searchLoading)
+                                        const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
                                             strokeWidth: 2,
-                                            color: AppColors.primary),
-                                      )
-                                    else if (_searchCtrl.text.isNotEmpty)
-                                      GestureDetector(
-                                        onTap: () {
-                                          _searchCtrl.clear();
-                                          setState(
-                                              () => _searchResults = []);
-                                        },
-                                        child: const Icon(
+                                            color: AppColors.primary,
+                                          ),
+                                        )
+                                      else if (_searchCtrl.text.isNotEmpty)
+                                        GestureDetector(
+                                          onTap: () {
+                                            _searchCtrl.clear();
+                                            setState(() => _searchResults = []);
+                                          },
+                                          child: const Icon(
                                             Icons.cancel_rounded,
                                             size: 18,
-                                            color: AppColors.textHint),
-                                      ),
-                                  ])
-                                : Row(children: [
-                                    const Icon(Icons.search_rounded,
-                                        size: 16, color: AppColors.textHint),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      '장소, 주소 검색',
-                                      style: GoogleFonts.notoSansKr(
-                                        fontSize: 13,
+                                            color: AppColors.textHint,
+                                          ),
+                                        ),
+                                    ],
+                                  )
+                                : Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.search_rounded,
+                                        size: 16,
                                         color: AppColors.textHint,
                                       ),
-                                    ),
-                                  ]),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '장소, 주소 검색',
+                                        style: GoogleFonts.notoSansKr(
+                                          fontSize: 13,
+                                          color: AppColors.textHint,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                           ),
                         ),
                       ),
@@ -396,11 +390,15 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
-                                    color: AppColors.primary),
+                                  strokeWidth: 2.5,
+                                  color: AppColors.primary,
+                                ),
                               )
-                            : const Icon(Icons.my_location_rounded,
-                                color: AppColors.primary, size: 22),
+                            : const Icon(
+                                Icons.my_location_rounded,
+                                color: AppColors.primary,
+                                size: 22,
+                              ),
                       ),
                     ],
                   ),
@@ -427,8 +425,11 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
                           shrinkWrap: true,
                           padding: const EdgeInsets.symmetric(vertical: 6),
                           itemCount: _searchResults.length,
-                          separatorBuilder: (_, __) => const Divider(
-                              height: 1, indent: 52, endIndent: 16),
+                          separatorBuilder: (_, _) => const Divider(
+                            height: 1,
+                            indent: 52,
+                            endIndent: 16,
+                          ),
                           itemBuilder: (_, i) {
                             final r = _searchResults[i];
                             final parts = r.name.split(',');
@@ -440,47 +441,55 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
                               onTap: () => _selectResult(r),
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 14, vertical: 10),
-                                child: Row(children: [
-                                  Container(
-                                    width: 32,
-                                    height: 32,
-                                    decoration: BoxDecoration(
-                                      color: AppColors.primarySurface,
-                                      borderRadius:
-                                          BorderRadius.circular(9),
-                                    ),
-                                    child: const Icon(
+                                  horizontal: 14,
+                                  vertical: 10,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 32,
+                                      height: 32,
+                                      decoration: BoxDecoration(
+                                        color: AppColors.primarySurface,
+                                        borderRadius: BorderRadius.circular(9),
+                                      ),
+                                      child: const Icon(
                                         Icons.location_on_rounded,
                                         size: 18,
-                                        color: AppColors.primary),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(title,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            title,
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: GoogleFonts.notoSansKr(
                                               fontSize: 13,
                                               fontWeight: FontWeight.w600,
                                               color: AppColors.textPrimary,
-                                            )),
-                                        if (sub.isNotEmpty)
-                                          Text(sub,
+                                            ),
+                                          ),
+                                          if (sub.isNotEmpty)
+                                            Text(
+                                              sub,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: GoogleFonts.notoSansKr(
                                                 fontSize: 11,
                                                 color: AppColors.textHint,
-                                              )),
-                                      ],
+                                              ),
+                                            ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                ]),
+                                  ],
+                                ),
                               ),
                             );
                           },
@@ -501,14 +510,20 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
               children: [
                 _FloatingBtn(
                   onTap: _zoomIn,
-                  child: const Icon(Icons.add_rounded,
-                      size: 22, color: AppColors.textPrimary),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    size: 22,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 _FloatingBtn(
                   onTap: _zoomOut,
-                  child: const Icon(Icons.remove_rounded,
-                      size: 22, color: AppColors.textPrimary),
+                  child: const Icon(
+                    Icons.remove_rounded,
+                    size: 22,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
               ],
             ),
@@ -523,8 +538,9 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
               padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPad + 20),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.08),
@@ -548,79 +564,89 @@ class _PlaceMapPickerState extends State<PlaceMapPicker> {
                       ),
                     ),
                   ),
-                  Row(children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        color: AppColors.primarySurface,
-                        borderRadius: BorderRadius.circular(10),
+                  Row(
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: AppColors.primarySurface,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.location_on_rounded,
+                          color: AppColors.primary,
+                          size: 18,
+                        ),
                       ),
-                      child: const Icon(Icons.location_on_rounded,
-                          color: AppColors.primary, size: 18),
-                    ),
-                    const SizedBox(width: 10),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('선택한 위치',
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '선택한 위치',
                             style: GoogleFonts.notoSansKr(
-                                fontSize: 11,
-                                color: AppColors.textSecondary)),
-                        Text(
-                          '${_center.latitude.toStringAsFixed(5)}, '
-                          '${_center.longitude.toStringAsFixed(5)}',
+                              fontSize: 11,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          Text(
+                            '${_center.latitude.toStringAsFixed(5)}, '
+                            '${_center.longitude.toStringAsFixed(5)}',
+                            style: GoogleFonts.notoSansKr(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.primarySurface,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '반경 $_radius m',
                           style: GoogleFonts.notoSansKr(
-                            fontSize: 13,
+                            fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
+                            color: AppColors.primary,
                           ),
                         ),
-                      ],
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: AppColors.primarySurface,
-                        borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Text(
-                        '반경 $_radius m',
-                        style: GoogleFonts.notoSansKr(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ),
-                  ]),
+                    ],
+                  ),
 
                   const SizedBox(height: 16),
 
-                  Text('감지 반경',
-                      style: GoogleFonts.notoSansKr(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textSecondary)),
+                  Text(
+                    '감지 반경',
+                    style: GoogleFonts.notoSansKr(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     children: _radii.map((r) {
                       final selected = r == _radius;
-                      final label =
-                          r >= 1000 ? '${r ~/ 1000}km' : '${r}m';
+                      final label = r >= 1000 ? '${r ~/ 1000}km' : '${r}m';
                       return Expanded(
                         child: GestureDetector(
                           onTap: () {
                             setState(() => _radius = r);
-                            _updateCircleOverlay();
                           },
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 180),
                             margin: const EdgeInsets.only(right: 6),
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 10),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
                             decoration: BoxDecoration(
                               color: selected
                                   ? AppColors.primary
@@ -682,8 +708,11 @@ class _SearchResult {
   final String name;
   final double lat;
   final double lng;
-  const _SearchResult(
-      {required this.name, required this.lat, required this.lng});
+  const _SearchResult({
+    required this.name,
+    required this.lat,
+    required this.lng,
+  });
 }
 
 // ─── 플로팅 버튼 ───────────────────────────────────────────────────────────────
