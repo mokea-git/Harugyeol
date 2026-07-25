@@ -154,11 +154,24 @@ jobs:
       - name: Stop previous runtime
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
+          port="$(grep -E '^PORT=' .env | tail -n 1 | cut -d '=' -f 2-)"
+          port="${port:-3000}"
           docker rm -f hrg-bk >/dev/null 2>&1 || true
+          docker ps --filter "publish=$port" --format '{{.ID}}' | while read -r container_id; do
+            [ -n "$container_id" ] && docker rm -f "$container_id"
+          done
           if command -v pm2 >/dev/null 2>&1; then
             pm2 delete hrg-bk >/dev/null 2>&1 || true
             pm2 delete harugyeol-server >/dev/null 2>&1 || true
             pm2 save >/dev/null 2>&1 || true
+          fi
+          if command -v lsof >/dev/null 2>&1; then
+            lsof -nP -iTCP:"$port" -sTCP:LISTEN \
+              | awk 'NR > 1 && $1 ~ /^(node|npm|pnpm|yarn|bun|tsx|ts-node|pm2)$/ {print $2}' \
+              | sort -u \
+              | while read -r pid; do
+                [ -n "$pid" ] && kill "$pid"
+              done
           fi
 
       - name: Pull Docker image
