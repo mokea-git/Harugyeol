@@ -101,10 +101,14 @@ jobs:
             echo "::error::Docker is not installed on the self-hosted runner."
             exit 1
           }
-          docker compose version >/dev/null 2>&1 || {
-            echo "::error::Docker Compose v2 is not available on the self-hosted runner."
+          if docker compose version >/dev/null 2>&1; then
+            echo "COMPOSE_CMD=docker compose" >> "$GITHUB_ENV"
+          elif command -v docker-compose >/dev/null 2>&1; then
+            echo "COMPOSE_CMD=docker-compose" >> "$GITHUB_ENV"
+          else
+            echo "::error::Docker Compose is not available on the self-hosted runner."
             exit 1
-          }
+          fi
 
       - name: Publish source files
         run: |
@@ -119,11 +123,11 @@ jobs:
 
       - name: Pull Docker image
         working-directory: ${{ env.DEPLOY_PATH }}
-        run: IMAGE_NAME="${{ env.IMAGE_NAME }}:latest" docker compose pull
+        run: IMAGE_NAME="${{ env.IMAGE_NAME }}:latest" $COMPOSE_CMD pull
 
       - name: Start Docker service
         working-directory: ${{ env.DEPLOY_PATH }}
-        run: IMAGE_NAME="${{ env.IMAGE_NAME }}:latest" docker compose up -d --remove-orphans
+        run: IMAGE_NAME="${{ env.IMAGE_NAME }}:latest" $COMPOSE_CMD up -d --remove-orphans
 
       - name: Prune old Docker images
         run: docker image prune -f
