@@ -1,10 +1,10 @@
-# HRG-BK Deployment
+# HRG-BK Docker Deployment
 
 ## GitHub Actions
 
 - `CI` runs `npm ci` and `npm run build` on every branch push and pull request.
 - `Deploy` runs on `main` pushes and manual dispatches.
-- Deployment expects a self-hosted runner on the production server.
+- Deployment expects a self-hosted runner on the production server with Docker and Docker Compose v2 installed.
 
 ## Server Setup
 
@@ -34,4 +34,10 @@ If you use a different deployment path, set the repository variable `DEPLOY_PATH
 
 ## Runtime
 
-The deploy workflow copies `dist/`, `package.json`, `package-lock.json`, and `ecosystem.config.cjs` into `DEPLOY_PATH`, installs production dependencies, and reloads the app with PM2.
+The deploy workflow syncs the repository into `DEPLOY_PATH`, keeps the server-side `.env` file intact, builds the Docker image, and starts the service with:
+
+```bash
+docker compose up -d --remove-orphans
+```
+
+The API is exposed on `PORT` from `.env` and uses `/health` as the container health check.

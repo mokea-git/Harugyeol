@@ -18,50 +18,46 @@ env:
 
 jobs:
   deploy:
-    name: Deploy to self-hosted runner
+    name: Docker deploy to self-hosted runner
     runs-on: self-hosted
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
+      - name: Verify server environment
+        run: |
+          test -f "$DEPLOY_PATH/.env" || {
+            echo "::error::.env is missing in $DEPLOY_PATH. Create it on the server before deployment."
+            exit 1
+          }
+          command -v docker >/dev/null 2>&1 || {
+            echo "::error::Docker is not installed on the self-hosted runner."
+            exit 1
+          }
+          docker compose version >/dev/null 2>&1 || {
+            echo "::error::Docker Compose v2 is not available on the self-hosted runner."
+            exit 1
+          }
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Publish build files
+      - name: Publish source files
         run: |
           mkdir -p "$DEPLOY_PATH"
           rsync -a --delete \
             --exclude '.env' \
-            dist package.json package-lock.json ecosystem.config.cjs \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude 'dist' \
+            ./ \
             "$DEPLOY_PATH"/
 
-      - name: Install production dependencies
+      - name: Build Docker image
         working-directory: ${{ env.DEPLOY_PATH }}
-        run: npm ci --omit=dev
+        run: docker compose build --pull
 
-      - name: Verify runtime env
+      - name: Start Docker service
         working-directory: ${{ env.DEPLOY_PATH }}
-        run: |
-          test -f .env || {
-            echo "::error::.env is missing in $DEPLOY_PATH. Create it on the server before deployment."
-            exit 1
-          }
+        run: docker compose up -d --remove-orphans
 
-      - name: Restart app with PM2
-        working-directory: ${{ env.DEPLOY_PATH }}
-        run: |
-          if ! command -v pm2 >/dev/null 2>&1; then
-            npm install -g pm2
-          fi
-          pm2 startOrReload ecosystem.config.cjs --env production
-          pm2 save
+      - name: Prune old Docker images
+        run: docker image prune -f
