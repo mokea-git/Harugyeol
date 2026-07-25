@@ -4,7 +4,7 @@ import {
   ensureProfileFromAuthUser,
   ProfileRecord,
   updateProfileFields,
-} from '../lib/sqlite';
+} from '../lib/postgres';
 
 function toProfileResponse(profile: ProfileRecord) {
   return {
@@ -18,18 +18,16 @@ function toProfileResponse(profile: ProfileRecord) {
 
 export async function profilesRoutes(fastify: FastifyInstance) {
   // POST /profiles/sync
-  // OAuth 메타데이터를 기반으로 프로필을 최초 생성/동기화
   fastify.post(
     '/profiles/sync',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const user = (request as any).user;
-      const profile = ensureProfileFromAuthUser({
+      const { user } = request;
+      const profile = await ensureProfileFromAuthUser({
         id: user.id,
         email: user.email,
         user_metadata: user.user_metadata,
       });
-
       return reply.send(toProfileResponse(profile));
     },
   );
@@ -39,13 +37,12 @@ export async function profilesRoutes(fastify: FastifyInstance) {
     '/profiles/me',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const user = (request as any).user;
-      const profile = ensureProfileFromAuthUser({
+      const { user } = request;
+      const profile = await ensureProfileFromAuthUser({
         id: user.id,
         email: user.email,
         user_metadata: user.user_metadata,
       });
-
       return reply.send(toProfileResponse(profile));
     },
   );
@@ -55,7 +52,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
     '/profiles/me',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const user = (request as any).user;
+      const { user } = request;
       const nickname = request.body?.nickname?.trim();
       const avatarUrl = request.body?.avatar_url?.trim();
 
@@ -68,14 +65,13 @@ export async function profilesRoutes(fastify: FastifyInstance) {
       }
 
       try {
-        // 프로필이 없더라도 PATCH가 실패하지 않도록 먼저 보장
-        ensureProfileFromAuthUser({
+        await ensureProfileFromAuthUser({
           id: user.id,
           email: user.email,
           user_metadata: user.user_metadata,
         });
 
-        const profile = updateProfileFields(user.id, {
+        const profile = await updateProfileFields(user.id, {
           nickname: nickname || undefined,
           avatarUrl: avatarUrl || undefined,
         });

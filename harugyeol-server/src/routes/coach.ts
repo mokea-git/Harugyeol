@@ -8,7 +8,7 @@ import {
   insertCoachMessage,
   listCoachMessages,
   listRecentAnalyses,
-} from '../lib/sqlite';
+} from '../lib/postgres';
 
 const FREE_DAILY_COACH_LIMIT = 5;
 
@@ -21,16 +21,15 @@ export async function coachRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth },
     async (request, reply) => {
       const { message } = request.body;
-      const user = (request as any).user;
+      const { user } = request;
 
       if (!message?.trim()) {
         return reply.code(400).send({ error: 'message is required' });
       }
 
-      // 무료 플랜 일 5회 제한
-      const subStatus = getSubscriptionStatus(user.id);
+      const subStatus = await getSubscriptionStatus(user.id);
       if (!subStatus.isPro) {
-        const todayCount = countCoachMessagesToday(user.id);
+        const todayCount = await countCoachMessagesToday(user.id);
         if (todayCount >= FREE_DAILY_COACH_LIMIT) {
           return reply.code(403).send({
             error: `오늘 무료 AI 코치 대화(${FREE_DAILY_COACH_LIMIT}회)를 모두 사용했어요. PRO로 업그레이드하면 무제한으로 대화할 수 있어요.`,
@@ -40,17 +39,14 @@ export async function coachRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // 최근 감정 패턴 가져오기 (최근 7개 분석)
-      const recentAnalyses = listRecentAnalyses(user.id, 7);
+      const recentAnalyses = await listRecentAnalyses(user.id, 7);
 
       const emotionSummary = recentAnalyses
-        ? recentAnalyses
-            .flatMap((a) => a.emotions as string[])
-            .reduce<Record<string, number>>((acc, e) => {
-              acc[e] = (acc[e] ?? 0) + 1;
-              return acc;
-            }, {})
-        : {};
+        .flatMap((a) => a.emotions as string[])
+        .reduce<Record<string, number>>((acc, e) => {
+          acc[e] = (acc[e] ?? 0) + 1;
+          return acc;
+        }, {});
 
       const emotionSummaryText = Object.entries(emotionSummary)
         .sort((a, b) => b[1] - a[1])
@@ -58,20 +54,17 @@ export async function coachRoutes(fastify: FastifyInstance) {
         .map(([emotion, count]) => `${emotion}(${count}회)`)
         .join(', ');
 
-      // 이전 대화 히스토리 가져오기 (최근 10개)
-      const history = listCoachMessages(user.id, 10, false);
+      const history = await listCoachMessages(user.id, 10, false);
 
-      const conversationHistory = (history ?? [])
+      const conversationHistory = history
         .reverse()
         .map((m) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content as string,
         }));
 
-      // 현재 메시지 추가
       conversationHistory.push({ role: 'user', content: message });
 
-      // Claude 호출
       const response = await anthropic.messages.create({
         model: 'claude-haiku-4-5',
         max_tokens: 512,
@@ -89,9 +82,8 @@ export async function coachRoutes(fastify: FastifyInstance) {
       const assistantMessage =
         response.content[0].type === 'text' ? response.content[0].text : '';
 
-      // 대화 저장 (user + assistant)
-      insertCoachMessage(user.id, 'user', message);
-      insertCoachMessage(user.id, 'assistant', assistantMessage);
+      await insertCoachMessage(user.id, 'user', message);
+      await insertCoachMessage(user.id, 'assistant', assistantMessage);
 
       return reply.send({ message: assistantMessage });
     },
@@ -102,20 +94,19 @@ export async function coachRoutes(fastify: FastifyInstance) {
     '/coach/history',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const user = (request as any).user;
-
-      const data = listCoachMessages(user.id, 50, true);
+      const { user } = request;
+      const data = await listCoachMessages(user.id, 50, true);
       return reply.send(data ?? []);
     },
   );
 
-  // DELETE /coach/history  (대화 초기화)
+  // DELETE /coach/history
   fastify.delete(
     '/coach/history',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const user = (request as any).user;
-      clearCoachMessages(user.id);
+      const { user } = request;
+      await clearCoachMessages(user.id);
       return reply.send({ ok: true });
     },
   );

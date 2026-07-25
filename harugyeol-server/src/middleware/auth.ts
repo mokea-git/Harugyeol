@@ -1,7 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { getUserFromToken } from '../lib/supabase';
 
-// 요청에 user를 붙여주는 훅
 export async function requireAuth(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -18,6 +17,5 @@ export async function requireAuth(
     return reply.code(401).send({ error: 'Invalid or expired token' });
   }
 
-  // request에 user 정보 주입
-  (request as any).user = user;
+  request.user = user;
 }

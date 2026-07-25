@@ -6,7 +6,16 @@ import {
   startTrial,
   upgradeToPro,
   downgradePlan,
-} from '../lib/sqlite';
+} from '../lib/postgres';
+
+type RevenueCatWebhookBody = {
+  event?: {
+    type?: string;
+    app_user_id?: string;
+    original_app_user_id?: string;
+  };
+  app_user_id?: string;
+};
 
 export async function subscriptionsRoutes(fastify: FastifyInstance) {
   // GET /subscriptions/status
@@ -14,49 +23,46 @@ export async function subscriptionsRoutes(fastify: FastifyInstance) {
     '/subscriptions/status',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const user = (request as any).user;
-      const status = getSubscriptionStatus(user.id);
+      const { user } = request;
+      const status = await getSubscriptionStatus(user.id);
       return reply.send(status);
     },
   );
 
-  // POST /subscriptions/trial — 7일 무료 체험 시작
+  // POST /subscriptions/trial
   fastify.post(
     '/subscriptions/trial',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const user = (request as any).user;
-      ensureProfileFromAuthUser({ id: user.id, email: user.email, user_metadata: user.user_metadata });
-      const current = getSubscriptionStatus(user.id);
+      const { user } = request;
+      await ensureProfileFromAuthUser({ id: user.id, email: user.email, user_metadata: user.user_metadata });
+      const current = await getSubscriptionStatus(user.id);
 
-      // 이미 PRO이면 trial 필요 없음
       if (current.plan === 'pro') {
         return reply.send(current);
       }
-      // 이미 trial 중이거나 만료 후 재신청 모두 허용 (재시작)
-      const status = startTrial(user.id);
+      const status = await startTrial(user.id);
       return reply.send(status);
     },
   );
 
-  // POST /subscriptions/activate — 앱에서 결제 성공 후 즉시 서버 플랜 업데이트
+  // POST /subscriptions/activate
   fastify.post(
     '/subscriptions/activate',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const user = (request as any).user;
-      ensureProfileFromAuthUser({ id: user.id, email: user.email, user_metadata: user.user_metadata });
-      const status = upgradeToPro(user.id);
+      const { user } = request;
+      await ensureProfileFromAuthUser({ id: user.id, email: user.email, user_metadata: user.user_metadata });
+      const status = await upgradeToPro(user.id);
       return reply.send(status);
     },
   );
 
-  // POST /subscriptions/webhook — RevenueCat 웹훅
-  // RevenueCat > Project > Webhooks 에서 이 URL 등록
-  fastify.post<{ Body: Record<string, unknown> }>(
+  // POST /subscriptions/webhook
+  fastify.post<{ Body: RevenueCatWebhookBody }>(
     '/subscriptions/webhook',
     async (request, reply) => {
-      const event = request.body as any;
+      const event = request.body;
       const eventType: string = event?.event?.type ?? '';
       const userId: string | undefined =
         event?.event?.app_user_id ??
@@ -69,21 +75,14 @@ export async function subscriptionsRoutes(fastify: FastifyInstance) {
         return reply.code(400).send({ error: 'missing user id' });
       }
 
-      // 구독 활성화 이벤트
-      const activateEvents = [
-        'INITIAL_PURCHASE',
-        'RENEWAL',
-        'UNCANCELLATION',
-        'NON_RENEWING_PURCHASE',
-      ];
-      // 구독 비활성화 이벤트
+      const activateEvents = ['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION', 'NON_RENEWING_PURCHASE'];
       const deactivateEvents = ['CANCELLATION', 'EXPIRATION', 'BILLING_ISSUE'];
 
       if (activateEvents.includes(eventType)) {
-        upgradeToPro(userId);
+        await upgradeToPro(userId);
         fastify.log.info({ userId }, 'Plan upgraded to PRO');
       } else if (deactivateEvents.includes(eventType)) {
-        downgradePlan(userId, 'free');
+        await downgradePlan(userId, 'free');
         fastify.log.info({ userId }, 'Plan downgraded to free');
       }
 
