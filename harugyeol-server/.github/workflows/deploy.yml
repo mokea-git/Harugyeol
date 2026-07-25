@@ -105,6 +105,19 @@ jobs:
             echo "::error::Docker is not installed on the self-hosted runner."
             exit 1
           }
+          if ! docker info >/dev/null 2>&1; then
+            if [ "${RUNNER_OS:-}" = "macOS" ]; then
+              open -ga Docker >/dev/null 2>&1 || true
+            fi
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+              docker info >/dev/null 2>&1 && break
+              sleep 2
+            done
+          fi
+          docker info >/dev/null 2>&1 || {
+            echo "::error::Docker daemon is not reachable from the self-hosted runner."
+            exit 1
+          }
           if docker compose version >/dev/null 2>&1; then
             echo "COMPOSE_CMD=docker compose" >> "$GITHUB_ENV"
           elif command -v docker-compose >/dev/null 2>&1; then
@@ -146,19 +159,6 @@ jobs:
             pm2 delete hrg-bk >/dev/null 2>&1 || true
             pm2 delete harugyeol-server >/dev/null 2>&1 || true
             pm2 save >/dev/null 2>&1 || true
-          fi
-          set -a
-          . "$DEPLOY_PATH/.env"
-          set +a
-          port="${PORT:-3000}"
-          pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN || true)"
-          if [ -n "$pids" ]; then
-            kill $pids || true
-            sleep 2
-            pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN || true)"
-            if [ -n "$pids" ]; then
-              kill -9 $pids || true
-            fi
           fi
 
       - name: Pull Docker image
