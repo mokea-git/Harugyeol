@@ -3,7 +3,9 @@
 ## GitHub Actions
 
 - `CI` runs `npm ci` and `npm run build` on every branch push and pull request.
+- `CI` also runs `npm test` and validates that the Docker image builds.
 - `Deploy` runs on `main` pushes and manual dispatches.
+- `Deploy` pushes `ghcr.io/mokea-studio/hrg-bk:latest` and `ghcr.io/mokea-studio/hrg-bk:<commit-sha>`, then deploys `latest`.
 - Deployment expects a self-hosted runner on the production server with Docker and Docker Compose v2 installed.
 
 ## Server Setup
@@ -34,10 +36,10 @@ If you use a different deployment path, set the repository variable `DEPLOY_PATH
 
 ## Runtime
 
-The deploy workflow syncs the repository into `DEPLOY_PATH`, keeps the server-side `.env` file intact, builds the Docker image, and starts the service with:
+The deploy workflow syncs the repository into `DEPLOY_PATH`, keeps the server-side `.env` file intact, pulls the GitHub Container Registry image, and starts the service with:
 
 ```bash
-docker compose up -d --remove-orphans
+IMAGE_NAME=ghcr.io/mokea-studio/hrg-bk:latest docker compose up -d --remove-orphans
 ```
 
 The API is exposed on `PORT` from `.env` and uses `/health` as the container health check.

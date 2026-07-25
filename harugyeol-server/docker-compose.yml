@@ -1,9 +1,6 @@
 services:
   hrg-bk:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: hrg-bk:latest
+    image: ${IMAGE_NAME:-ghcr.io/mokea-studio/hrg-bk:latest}
     container_name: hrg-bk
     restart: unless-stopped
     env_file:

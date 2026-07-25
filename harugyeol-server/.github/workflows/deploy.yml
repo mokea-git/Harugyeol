@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: production
@@ -15,15 +16,47 @@ concurrency:
 
 env:
   DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/hrg-bk' }}
+  IMAGE_NAME: ghcr.io/mokea-studio/hrg-bk
 
 jobs:
+  build-and-push:
+    name: Build and push Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
   deploy:
-    name: Docker deploy to self-hosted runner
+    name: Deploy image to self-hosted runner
+    needs: build-and-push
     runs-on: self-hosted
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Verify server environment
         run: |
@@ -51,13 +84,13 @@ jobs:
             ./ \
             "$DEPLOY_PATH"/
 
-      - name: Build Docker image
+      - name: Pull Docker image
         working-directory: ${{ env.DEPLOY_PATH }}
-        run: docker compose build --pull
+        run: IMAGE_NAME="${{ env.IMAGE_NAME }}:latest" docker compose pull
 
       - name: Start Docker service
         working-directory: ${{ env.DEPLOY_PATH }}
-        run: docker compose up -d --remove-orphans
+        run: IMAGE_NAME="${{ env.IMAGE_NAME }}:latest" docker compose up -d --remove-orphans
 
       - name: Prune old Docker images
         run: docker image prune -f
