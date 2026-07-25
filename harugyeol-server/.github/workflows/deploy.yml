@@ -74,6 +74,23 @@ jobs:
           }
           EOF
 
+      - name: Provision runtime env
+        run: |
+          mkdir -p "$DEPLOY_PATH"
+          if [ ! -f "$DEPLOY_PATH/.env" ]; then
+            {
+              printf 'PORT=%s\n' '${{ secrets.PORT }}'
+              printf 'HOST=0.0.0.0\n'
+              printf 'APP_AUTH_CALLBACK_URL=io.supabase.harugyeol://login-callback\n'
+              printf 'POSTGRES_URL=%s\n' '${{ secrets.POSTGRES_URL }}'
+              printf 'SUPABASE_URL=%s\n' '${{ secrets.SUPABASE_URL }}'
+              printf 'SUPABASE_SERVICE_ROLE_KEY=%s\n' '${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}'
+              printf 'ANTHROPIC_API_KEY=%s\n' '${{ secrets.ANTHROPIC_API_KEY }}'
+              printf 'RESEND_API_KEY=%s\n' '${{ secrets.RESEND_API_KEY }}'
+              printf 'RESEND_FROM=%s\n' '${{ secrets.RESEND_FROM }}'
+            } > "$DEPLOY_PATH/.env"
+          fi
+
       - name: Verify server environment
         run: |
           test -f "$DEPLOY_PATH/.env" || {
