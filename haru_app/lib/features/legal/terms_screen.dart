@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../core/ads/ad_service.dart';
 import '../../core/theme/app_colors.dart';
 
 class TermsScreen extends StatelessWidget {
@@ -47,6 +48,8 @@ class TermsScreen extends StatelessWidget {
                 '6. 약관 변경',
                 '약관이 변경되는 경우 앱 내 공지 또는 서비스 화면을 통해 사전 안내합니다.',
               ),
+              const SizedBox(height: 8),
+              const SettingsBannerAd(),
             ],
           ),
         ),

@@ -9,7 +9,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/models/user_profile.dart';
 import '../../core/network/api_client.dart';
+import '../../core/ads/ad_service.dart';
+import '../../core/notifications/fcm_service.dart';
+import '../../core/notifications/notification_service.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_motion.dart';
+import '../../core/widgets/app_top_bar.dart';
 import '../auth/auth_service.dart';
 import '../auth/profile_service.dart';
 import '../subscription/subscription_api.dart';
@@ -30,34 +35,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   UserProfile? _profile;
   SubscriptionStatus? _subStatus;
-  bool _loading = true;
+  bool _loading = false;
   bool _reminderEnabled = true;
+  bool _sendingPushTest = false;
   TimeOfDay _reminderTime = const TimeOfDay(hour: 21, minute: 0);
   final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
+    _profile = ProfileService.instance.localProfile;
+    _subStatus = SubscriptionStatus.free();
+    _loading = _profile == null;
     _loadProfile();
+    _loadSubscriptionStatus();
     _loadSettings();
   }
 
   Future<void> _loadProfile() async {
     try {
-      final results = await Future.wait([
-        ProfileService.instance.getProfile(),
-        SubscriptionApi.instance.getStatus(),
-      ]);
-      if (mounted) {
-        setState(() {
-          _profile = results[0] as UserProfile;
-          _subStatus = results[1] as SubscriptionStatus;
-          _loading = false;
-        });
-      }
+      final profile = await ProfileService.instance.getProfile();
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        _loading = false;
+      });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _loadSubscriptionStatus() async {
+    final status = await SubscriptionApi.instance.getStatus();
+    if (!mounted) return;
+    setState(() {
+      _subStatus = status;
+      final profile = _profile;
+      if (profile != null && profile.plan != status.plan) {
+        _profile = profile.copyWith(plan: status.plan);
+      }
+    });
   }
 
   Future<void> _loadSettings() async {
@@ -69,165 +86,217 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  Future<void> _sendPushTest() async {
+    setState(() => _sendingPushTest = true);
+    try {
+      final registered = await FcmService.instance.syncToken();
+      if (!registered) {
+        if (mounted) {
+          _showSnack('푸시 기기 등록을 기다리는 중이에요. 잠시 후 다시 시도해 주세요.');
+        }
+        return;
+      }
+      final response = await ApiClient.instance.dio.post('/push/test');
+      final sent = (response.data as Map?)?['sent'] ?? 0;
+      if (mounted) _showSnack('서버에서 테스트 푸시를 $sent건 발송했어요.');
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      final message = data is Map ? data['error']?.toString() : null;
+      if (mounted) {
+        _showSnack(message ?? '푸시 발송에 실패했어요. 서버 설정을 확인해 주세요.');
+      }
+    } catch (_) {
+      if (mounted) _showSnack('푸시 발송에 실패했어요.');
+    } finally {
+      if (mounted) setState(() => _sendingPushTest = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       extendBody: true,
       body: Column(
         children: [
-          // ── 그라디언트 헤더 ──────────────────────────────────────
-          Container(
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF1E3A34), Color(0xFF2D5244), Color(0xFF3E6B4E)],
-              ),
-            ),
-            child: SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
-                child: Text(
-                  '설정',
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ).animate().fadeIn(duration: 400.ms),
-              ),
-            ),
+          const AppTopBar(
+            title: '설정',
+            subtitle: '프로필, 알림, 구독 상태를 관리해요',
+            icon: Icons.tune_rounded,
           ),
           Expanded(
             child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 120),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 4),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 120),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 4),
 
-              // ── 프로필 카드 ────────────────────────────────────────────
-              _loading
-                  ? _ProfileCardSkeleton()
-                  : _ProfileCard(profile: _profile)
-                        .animate(delay: 100.ms)
-                        .fadeIn(duration: 500.ms)
-                        .slideY(begin: 0.05, end: 0),
+                  // ── 프로필 카드 ────────────────────────────────────────────
+                  _loading
+                      ? _ProfileCardSkeleton()
+                      : _ProfileCard(profile: _profile)
+                            .animate(delay: 100.ms)
+                            .fadeIn(duration: AppMotion.page)
+                            .slideY(begin: 0.05, end: 0),
 
-              const SizedBox(height: 16),
+                  const SizedBox(height: 16),
 
-              // ── 구독 배너 ─────────────────────────────────────────────
-              _SubscriptionBanner(status: _subStatus)
-                  .animate(delay: 200.ms)
-                  .fadeIn(duration: 500.ms),
+                  // ── 구독 배너 ─────────────────────────────────────────────
+                  _SubscriptionBanner(status: _subStatus)
+                      .animate(delay: AppMotion.fast)
+                      .fadeIn(duration: AppMotion.page),
 
-              const SizedBox(height: 32),
+                  const SizedBox(height: 32),
 
-              // ── 일반 설정 ─────────────────────────────────────────────
-              _SectionTitle(title: '일반'),
-              _SettingsTile(
-                icon: Icons.notifications_outlined,
-                label: '알림 설정',
-                trailing: _ToggleSwitch(
-                  value: _reminderEnabled,
-                  onChanged: (value) async {
-                    setState(() => _reminderEnabled = value);
-                    await SettingsService.instance.setReminderEnabled(value);
-                    if (!mounted) return;
-                    _showSnack(value ? '알림을 켰어요' : '알림을 껐어요');
-                  },
-                ),
-              ),
-              _SettingsTile(
-                icon: Icons.schedule_rounded,
-                label: '일기 알림 시간',
-                onTap: _pickReminderTime,
-                trailing: Text(
-                  _formatTimeOfDay(_reminderTime),
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 14,
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
+                  // ── 일반 설정 ─────────────────────────────────────────────
+                  _SectionTitle(title: '일반'),
+                  _SettingsGroup(
+                    children: [
+                      _SettingsTile(
+                        icon: Icons.notifications_outlined,
+                        label: '알림 설정',
+                        trailing: _ToggleSwitch(
+                          value: _reminderEnabled,
+                          onChanged: (value) async {
+                            if (value) {
+                              final granted = await NotificationService.instance
+                                  .requestPermission();
+                              if (!granted) {
+                                if (mounted) _showSnack('알림 권한을 허용해 주세요.');
+                                return;
+                              }
+                            }
+                            setState(() => _reminderEnabled = value);
+                            await SettingsService.instance.setReminderEnabled(
+                              value,
+                            );
+                            if (value) {
+                              await NotificationService.instance
+                                  .showWelcomeReminder();
+                            }
+                            if (!mounted) return;
+                            _showSnack(value ? '알림을 켰어요' : '알림을 껐어요');
+                          },
+                        ),
+                      ),
+                      _SettingsTile(
+                        icon: Icons.schedule_rounded,
+                        label: '일기 알림 시간',
+                        onTap: _pickReminderTime,
+                        trailing: Text(
+                          _formatTimeOfDay(_reminderTime),
+                          style: GoogleFonts.notoSansKr(
+                            fontSize: 14,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      _SettingsTile(
+                        icon: Icons.send_rounded,
+                        label: '서버 푸시 알림 테스트',
+                        onTap: _sendingPushTest ? null : _sendPushTest,
+                        trailing: _sendingPushTest
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.chevron_right_rounded),
+                      ),
+                    ],
                   ),
-                ),
-              ),
 
-              const SizedBox(height: 24),
-              _SectionTitle(title: '계정'),
-              _SettingsTile(
-                icon: Icons.person_outline_rounded,
-                label: '닉네임 변경',
-                onTap: () => _showNicknameDialog(context),
-              ),
-              _SettingsTile(
-                icon: Icons.image_outlined,
-                label: '프로필 사진 변경',
-                onTap: _pickProfileImage,
-              ),
-              _SettingsTile(
-                icon: Icons.download_rounded,
-                label: '데이터 내보내기',
-                trailing: _subStatus?.isPro != true
-                    ? const _ProBadge()
-                    : null,
-                onTap: _subStatus?.isPro == true
-                    ? _exportData
-                    : () => context.push('/pro'),
-              ),
-              _SettingsTile(
-                icon: Icons.help_outline_rounded,
-                label: '도움말 & FAQ',
-                onTap: () => context.push('/help-faq'),
-              ),
-
-              const SizedBox(height: 24),
-              _SectionTitle(title: '기타'),
-              _SettingsTile(
-                icon: Icons.description_outlined,
-                label: '이용약관',
-                onTap: () => context.push('/terms'),
-              ),
-              _SettingsTile(
-                icon: Icons.shield_outlined,
-                label: '개인정보처리방침',
-                onTap: () => context.push('/privacy-policy'),
-              ),
-              _SettingsTile(
-                icon: Icons.info_outline_rounded,
-                label: '앱 버전',
-                onTap: _showVersionDialog,
-                trailing: Text(
-                  'v$_appVersion',
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 14,
-                    color: AppColors.textHint,
+                  const SizedBox(height: 24),
+                  _SectionTitle(title: '계정'),
+                  _SettingsGroup(
+                    children: [
+                      _SettingsTile(
+                        icon: Icons.person_outline_rounded,
+                        label: '닉네임 변경',
+                        onTap: () => _showNicknameDialog(context),
+                      ),
+                      _SettingsTile(
+                        icon: Icons.image_outlined,
+                        label: '프로필 사진 변경',
+                        onTap: _pickProfileImage,
+                      ),
+                      _SettingsTile(
+                        icon: Icons.download_rounded,
+                        label: '데이터 내보내기',
+                        trailing: _subStatus?.isPro != true
+                            ? const _ProBadge()
+                            : null,
+                        onTap: _subStatus?.isPro == true
+                            ? _exportData
+                            : () => context.push('/pro'),
+                      ),
+                      _SettingsTile(
+                        icon: Icons.help_outline_rounded,
+                        label: '도움말 & FAQ',
+                        onTap: () => context.push('/help-faq'),
+                      ),
+                    ],
                   ),
-                ),
-              ),
 
-              const SizedBox(height: 32),
+                  const SizedBox(height: 24),
+                  _SectionTitle(title: '기타'),
+                  _SettingsGroup(
+                    children: [
+                      _SettingsTile(
+                        icon: Icons.description_outlined,
+                        label: '이용약관',
+                        onTap: () => context.push('/terms'),
+                      ),
+                      _SettingsTile(
+                        icon: Icons.shield_outlined,
+                        label: '개인정보처리방침',
+                        onTap: () => context.push('/privacy-policy'),
+                      ),
+                      _SettingsTile(
+                        icon: Icons.info_outline_rounded,
+                        label: '앱 버전',
+                        onTap: _showVersionDialog,
+                        trailing: Text(
+                          'v$_appVersion',
+                          style: GoogleFonts.notoSansKr(
+                            fontSize: 14,
+                            color: AppColors.textHint,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
 
-              Center(
-                child: TextButton(
-                  onPressed: () => _showLogoutDialog(context),
-                  child: Text(
-                    '로그아웃',
-                    style: GoogleFonts.notoSansKr(
-                      fontSize: 15,
-                      color: AppColors.error,
-                      fontWeight: FontWeight.w500,
+                  const SizedBox(height: 32),
+
+                  // ── 배너 광고 (무료/트라이얼 유저만) ─────────────────────────
+                  if (_subStatus?.isPro != true)
+                    const SettingsBannerAd(),
+
+                  if (_subStatus?.isPro != true) const SizedBox(height: 8),
+
+                  Center(
+                    child: TextButton(
+                      onPressed: () => _showLogoutDialog(context),
+                      child: Text(
+                        '로그아웃',
+                        style: GoogleFonts.notoSansKr(
+                          fontSize: 15,
+                          color: AppColors.error,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-            ],          // inner Column children
-          ),            // inner Column
-        ),              // SingleChildScrollView
-        ),              // Expanded
-        ],              // outer Column children
-      ),                // outer Column
+                ], // inner Column children
+              ), // inner Column
+            ), // SingleChildScrollView
+          ), // Expanded
+        ], // outer Column children
+      ), // outer Column
     );
   }
 
@@ -516,11 +585,7 @@ class _ProfileCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF283F3B), Color(0xFF3A5A42)],
-        ),
+        gradient: AppColors.heroGradient,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
@@ -558,7 +623,7 @@ class _ProfileCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: const Color(0xFF8BBF84).withValues(alpha: 0.2),
+              color: AppColors.primaryLight.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
@@ -566,10 +631,7 @@ class _ProfileCard extends StatelessWidget {
               style: GoogleFonts.notoSansKr(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
-                color: isPro
-                    ? const Color(0xFFFFD700)
-                    : const Color(0xFF8BBF84),
-                letterSpacing: 1,
+                color: isPro ? const Color(0xFFFFD700) : AppColors.primaryLight,
               ),
             ),
           ),
@@ -638,7 +700,7 @@ class _InitialFallback extends StatelessWidget {
         style: GoogleFonts.notoSansKr(
           fontSize: 24,
           fontWeight: FontWeight.w700,
-          color: const Color(0xFF8BBF84),
+          color: AppColors.primaryLight,
         ),
       ),
     );
@@ -663,6 +725,37 @@ class _ProfileCardSkeleton extends StatelessWidget {
 }
 
 // ─── 공통 위젯 ───────────────────────────────────────────────────────────────
+
+class _SettingsGroup extends StatelessWidget {
+  final List<Widget> children;
+
+  const _SettingsGroup({required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.border),
+        boxShadow: AppColors.softShadow(
+          color: AppColors.secondary,
+          opacity: 0.05,
+        ),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            children[i],
+            if (i < children.length - 1)
+              const Divider(indent: 56, endIndent: 8, height: 1),
+          ],
+        ],
+      ),
+    );
+  }
+}
 
 class _SectionTitle extends StatelessWidget {
   final String title;
@@ -699,34 +792,45 @@ class _SettingsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 2),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        leading: Container(
-          width: 38,
-          height: 38,
-          decoration: BoxDecoration(
-            color: AppColors.surfaceVariant,
-            borderRadius: BorderRadius.circular(10),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: AppColors.primarySurface,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, size: 20, color: AppColors.secondary),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  label,
+                  style: GoogleFonts.notoSansKr(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              trailing ??
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.textHint,
+                    size: 22,
+                  ),
+            ],
           ),
-          child: Icon(icon, size: 20, color: AppColors.textSecondary),
         ),
-        title: Text(
-          label,
-          style: GoogleFonts.notoSansKr(
-            fontSize: 15,
-            fontWeight: FontWeight.w400,
-          ),
-        ),
-        trailing:
-            trailing ??
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: AppColors.textHint,
-              size: 22,
-            ),
-        onTap: onTap ?? () {},
       ),
     );
   }
@@ -739,25 +843,31 @@ class _ToggleSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onChanged == null ? null : () => onChanged!(!value),
-      child: Container(
-        width: 48,
-        height: 28,
-        decoration: BoxDecoration(
-          color: value ? AppColors.primary : AppColors.surfaceVariant,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: AnimatedAlign(
-          duration: const Duration(milliseconds: 200),
-          alignment: value ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            width: 22,
-            height: 22,
-            margin: const EdgeInsets.symmetric(horizontal: 3),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
+    return Semantics(
+      button: true,
+      toggled: value,
+      label: '알림',
+      child: GestureDetector(
+        onTap: onChanged == null ? null : () => onChanged!(!value),
+        child: AnimatedContainer(
+          duration: AppMotion.duration(context, AppMotion.normal),
+          width: 48,
+          height: 28,
+          decoration: BoxDecoration(
+            color: value ? AppColors.primary : AppColors.surfaceVariant,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: AnimatedAlign(
+            duration: AppMotion.duration(context, AppMotion.normal),
+            alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              width: 22,
+              height: 22,
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
             ),
           ),
         ),
@@ -780,43 +890,61 @@ class _SubscriptionBanner extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF1E3A34), Color(0xFF2D5244)],
-            begin: Alignment.centerLeft,
-            end: Alignment.centerRight,
-          ),
+          gradient: AppColors.heroGradient,
           borderRadius: BorderRadius.circular(16),
         ),
         child: Row(
           children: [
             Container(
-              width: 36, height: 36,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.workspace_premium_rounded,
-                  color: Color(0xFFFFD700), size: 20),
+              child: const Icon(
+                Icons.workspace_premium_rounded,
+                color: Color(0xFFFFD700),
+                size: 20,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('하루결 PRO 이용 중',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '하루결 PRO 이용 중',
                     style: GoogleFonts.notoSansKr(
-                        fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white)),
-                Text('모든 기능을 무제한으로 이용하고 있어요',
-                    style: GoogleFonts.notoSansKr(fontSize: 12, color: Colors.white60)),
-              ]),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  Text(
+                    '모든 기능을 무제한으로 이용하고 있어요',
+                    style: GoogleFonts.notoSansKr(
+                      fontSize: 12,
+                      color: Colors.white60,
+                    ),
+                  ),
+                ],
+              ),
             ),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                  color: const Color(0xFFFFD700).withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(8)),
-              child: Text('PRO',
-                  style: GoogleFonts.notoSansKr(
-                      fontSize: 11, fontWeight: FontWeight.w800,
-                      color: const Color(0xFFFFD700))),
+                color: const Color(0xFFFFD700).withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                'PRO',
+                style: GoogleFonts.notoSansKr(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFFFFD700),
+                ),
+              ),
             ),
           ],
         ),
@@ -829,39 +957,67 @@ class _SubscriptionBanner extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            gradient: LinearGradient(colors: [
-              AppColors.primary.withValues(alpha: 0.1),
-              const Color(0xFFFFD700).withValues(alpha: 0.05),
-            ], begin: Alignment.centerLeft, end: Alignment.centerRight),
+            gradient: LinearGradient(
+              colors: [
+                AppColors.primary.withValues(alpha: 0.1),
+                const Color(0xFFFFD700).withValues(alpha: 0.05),
+              ],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+            border: Border.all(
+              color: AppColors.primary.withValues(alpha: 0.25),
+            ),
           ),
-          child: Row(children: [
-            Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
                   color: AppColors.primarySurface,
-                  borderRadius: BorderRadius.circular(10)),
-              child: const Icon(Icons.access_time_rounded,
-                  color: AppColors.primary, size: 20),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('PRO 체험 중',
-                    style: GoogleFonts.notoSansKr(
-                        fontSize: 14, fontWeight: FontWeight.w700,
-                        color: AppColors.secondary)),
-                Text('${s.trialDaysLeft}일 후 자동으로 무료 전환돼요',
-                    style: GoogleFonts.notoSansKr(
-                        fontSize: 12, color: AppColors.textSecondary)),
-              ]),
-            ),
-            Text('D-${s.trialDaysLeft}',
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.access_time_rounded,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'PRO 체험 중',
+                      style: GoogleFonts.notoSansKr(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.secondary,
+                      ),
+                    ),
+                    Text(
+                      '${s.trialDaysLeft}일 후 자동으로 무료 전환돼요',
+                      style: GoogleFonts.notoSansKr(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                'D-${s.trialDaysLeft}',
                 style: GoogleFonts.notoSansKr(
-                    fontSize: 14, fontWeight: FontWeight.w800,
-                    color: AppColors.primary)),
-          ]),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.primary,
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -871,28 +1027,50 @@ class _SubscriptionBanner extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          gradient: LinearGradient(begin: Alignment.centerLeft, end: Alignment.centerRight,
+          gradient: LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
             colors: [
               AppColors.primary.withValues(alpha: 0.08),
               AppColors.primarySurface.withValues(alpha: 0.5),
-            ]),
+            ],
+          ),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
         ),
-        child: Row(children: [
-          const Icon(Icons.workspace_premium_rounded, color: AppColors.primary, size: 28),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('PRO로 업그레이드',
-                  style: GoogleFonts.notoSansKr(
-                      fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.secondary)),
-              Text('무제한 AI 분석 · 주간 리포트 · 코치 대화',
-                  style: GoogleFonts.notoSansKr(fontSize: 12, color: AppColors.textSecondary)),
-            ]),
-          ),
-          const Icon(Icons.chevron_right_rounded, color: AppColors.primary),
-        ]),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.workspace_premium_rounded,
+              color: AppColors.primary,
+              size: 28,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'PRO로 업그레이드',
+                    style: GoogleFonts.notoSansKr(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.secondary,
+                    ),
+                  ),
+                  Text(
+                    '무제한 AI 분석 · 주간 리포트 · 코치 대화',
+                    style: GoogleFonts.notoSansKr(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.primary),
+          ],
+        ),
       ),
     );
   }
@@ -908,12 +1086,19 @@ class _ProBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0xFFFFD700), Color(0xFFFFA726)]),
+        gradient: const LinearGradient(
+          colors: [Color(0xFFFFD700), Color(0xFFFFA726)],
+        ),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Text('PRO',
-          style: GoogleFonts.notoSansKr(
-              fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white)),
+      child: Text(
+        'PRO',
+        style: GoogleFonts.notoSansKr(
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          color: AppColors.dark,
+        ),
+      ),
     );
   }
 }
