@@ -1,31 +1,81 @@
-import type { FastifyInstance } from 'fastify';
-import { eq, gte } from 'drizzle-orm';
-import { db } from '../db';
-import { analyses, journals } from '../db/schema';
+import { FastifyInstance } from 'fastify';
+import { requireAuth } from '../middleware/auth';
+import { analyzeJournal } from '../lib/journalAnalysis';
+import {
+  createAnalysis,
+  findAnalysisByJournalId,
+  findAnalysisByUserAndJournalId,
+  listWeeklyAnalyses,
+} from '../lib/postgres';
 
-export async function analysisRoutes(app: FastifyInstance) {
-  const auth = { onRequest: [app.authenticate] };
+export async function analysesRoutes(fastify: FastifyInstance) {
+  // POST /analyses/trigger
+  fastify.post<{ Body: { journal_id: string; content: string } }>(
+    '/analyses/trigger',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { journal_id, content } = request.body;
+      const { user } = request;
 
-  app.get('/:journalId', auth, async (req, reply) => {
-    const { journalId } = req.params as { journalId: string };
+      if (!journal_id || !content) {
+        return reply.code(400).send({ error: 'journal_id and content are required' });
+      }
 
-    const analysis = await db.query.analyses.findFirst({
-      where: eq(analyses.journalId, journalId),
-    });
-    if (!analysis) return reply.status(404).send({ error: '분석 결과가 없습니다.' });
-    return analysis;
-  });
+      const existing = await findAnalysisByJournalId(journal_id);
+      if (existing) {
+        return reply.code(409).send({ error: 'Already analyzed' });
+      }
 
-  app.get('/weekly', auth, async (req) => {
-    const { userId } = req.user as { userId: string };
-    const weekAgo = new Date();
-    weekAgo.setDate(weekAgo.getDate() - 7);
+      let parsed;
+      try {
+        parsed = await analyzeJournal(content);
+      } catch (err) {
+        request.log.error({ err }, 'Failed to analyze journal');
+        return reply.code(502).send({ error: 'AI analysis failed' });
+      }
 
-    const weeklyJournals = await db.query.journals.findMany({
-      where: eq(journals.userId, userId),
-      with: { analyses: true },
-    });
+      const analysis = await createAnalysis({
+        journalId: journal_id,
+        userId: user.id,
+        emotions: parsed.emotions,
+        habits: parsed.habits,
+        feedback: parsed.feedback,
+        summary: parsed.summary ?? null,
+      });
 
-    return weeklyJournals;
-  });
+      return reply.code(201).send(analysis);
+    },
+  );
+
+  // GET /analyses/weekly
+  fastify.get(
+    '/analyses/weekly',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { user } = request;
+
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const sunday = new Date(now);
+      sunday.setDate(now.getDate() - dayOfWeek);
+      sunday.setHours(0, 0, 0, 0);
+
+      const data = await listWeeklyAnalyses(user.id, sunday.toISOString());
+      return reply.send(data ?? []);
+    },
+  );
+
+  // GET /analyses/:journalId
+  fastify.get<{ Params: { journalId: string } }>(
+    '/analyses/:journalId',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { journalId } = request.params;
+      const { user } = request;
+
+      const data = await findAnalysisByUserAndJournalId(user.id, journalId);
+      if (!data) return reply.code(404).send({ error: 'Not found' });
+      return reply.send(data);
+    },
+  );
 }

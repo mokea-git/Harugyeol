@@ -1,50 +1,91 @@
 import 'dotenv/config';
-import Fastify, { FastifyReply, FastifyRequest } from 'fastify';
-import fjwt from '@fastify/jwt';
+import Fastify from 'fastify';
 import cors from '@fastify/cors';
-
-import { authRoutes } from './routes/auth';
-import { journalRoutes } from './routes/journals';
-import { analysisRoutes } from './routes/analyses';
+import { initSchema } from './lib/postgres';
+import { analysesRoutes } from './routes/analyses';
 import { coachRoutes } from './routes/coach';
-import { subscriptionRoutes } from './routes/subscriptions';
-import { startCronJobs } from './services/cron';
+import { journalsRoutes } from './routes/journals';
+import { petsRoutes } from './routes/pets';
+import { profilesRoutes } from './routes/profiles';
+import { subscriptionsRoutes } from './routes/subscriptions';
 
-// @fastify/jwt가 추가하는 authenticate 데코레이터 타입 선언
-declare module 'fastify' {
-  interface FastifyInstance {
-    authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void>;
-  }
-}
-
-const app = Fastify({ logger: true });
-
-app.register(cors, { origin: true });
-app.register(fjwt, { secret: process.env.JWT_SECRET! });
-
-// JWT 검증 헬퍼 데코레이터 (라우트에서 onRequest: [app.authenticate] 로 사용)
-app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
-  try {
-    await request.jwtVerify();
-  } catch (err) {
-    reply.send(err);
-  }
+const server = Fastify({
+  logger: true,
+  bodyLimit: 5 * 1024 * 1024,
 });
 
-app.register(authRoutes, { prefix: '/auth' });
-app.register(journalRoutes, { prefix: '/journals' });
-app.register(analysisRoutes, { prefix: '/analyses' });
-app.register(coachRoutes, { prefix: '/coach' });
-app.register(subscriptionRoutes, { prefix: '/subscriptions' });
+async function start() {
+  server.addContentTypeParser('application/json', { parseAs: 'string' }, function (_req, body, done) {
+    if (!body) return done(null, {});
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
 
-const start = async () => {
-  try {
-    await app.listen({ port: Number(process.env.PORT) || 3000, host: '0.0.0.0' });
-    startCronJobs();
-  } catch (err) {
-    app.log.error(err);
-    process.exit(1);
-  }
-};
+  await server.register(cors, {
+    origin: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
 
-start();
+  server.get<{ Querystring: Record<string, string | undefined> }>(
+    '/',
+    async (request, reply) => {
+      const query = request.query;
+      const isOAuthCallback =
+        query.code ||
+        query.error ||
+        query.error_code ||
+        query.error_description;
+
+      if (!isOAuthCallback) {
+        return reply.send({ status: 'ok', service: 'harugyeol-server' });
+      }
+
+      const appCallback =
+        process.env.APP_AUTH_CALLBACK_URL ??
+        'io.supabase.harugyeol://login-callback';
+      const params = new URLSearchParams();
+      Object.entries(query).forEach(([key, value]) => {
+        if (value) params.set(key, value);
+      });
+      const redirectUrl = `${appCallback}?${params.toString()}`;
+
+      return reply.type('text/html; charset=utf-8').send(`<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>하루결 로그인</title>
+  </head>
+  <body>
+    <script>window.location.replace(${JSON.stringify(redirectUrl)});</script>
+    <p>하루결 앱으로 돌아가는 중입니다.</p>
+  </body>
+</html>`);
+    },
+  );
+
+  server.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+
+  await initSchema();
+
+  await server.register(analysesRoutes);
+  await server.register(coachRoutes);
+  await server.register(journalsRoutes);
+  await server.register(petsRoutes);
+  await server.register(profilesRoutes);
+  await server.register(subscriptionsRoutes);
+
+  const port = Number(process.env.PORT ?? 3000);
+  const host = process.env.HOST ?? '0.0.0.0';
+
+  await server.listen({ port, host });
+  console.log(`하루결 서버 실행 중 — http://${host}:${port}`);
+}
+
+start().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

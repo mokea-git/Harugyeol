@@ -1,50 +1,92 @@
-import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
-import { db } from '../db';
-import { subscriptions, users } from '../db/schema';
+import { FastifyInstance } from 'fastify';
+import { requireAuth } from '../middleware/auth';
+import {
+  ensureProfileFromAuthUser,
+  getSubscriptionStatus,
+  startTrial,
+  upgradeToPro,
+  downgradePlan,
+} from '../lib/postgres';
 
-export async function subscriptionRoutes(app: FastifyInstance) {
-  const auth = { onRequest: [app.authenticate] };
+type RevenueCatWebhookBody = {
+  event?: {
+    type?: string;
+    app_user_id?: string;
+    original_app_user_id?: string;
+  };
+  app_user_id?: string;
+};
 
-  // RevenueCat 웹훅: 구독 상태 업데이트
-  app.post('/webhook', async (req, reply) => {
-    const secret = req.headers['x-revenuecat-secret'];
-    if (secret !== process.env.REVENUECAT_WEBHOOK_SECRET) {
-      return reply.status(401).send({ error: 'Unauthorized' });
-    }
+export async function subscriptionsRoutes(fastify: FastifyInstance) {
+  // GET /subscriptions/status
+  fastify.get(
+    '/subscriptions/status',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { user } = request;
+      const status = await getSubscriptionStatus(user.id);
+      return reply.send(status);
+    },
+  );
 
-    const event = req.body as {
-      event: { type: string; app_user_id: string; expiration_at_ms?: number };
-    };
-    const { type, app_user_id, expiration_at_ms } = event.event;
+  // POST /subscriptions/trial
+  fastify.post(
+    '/subscriptions/trial',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { user } = request;
+      await ensureProfileFromAuthUser({ id: user.id, email: user.email, user_metadata: user.user_metadata });
+      const current = await getSubscriptionStatus(user.id);
 
-    const status = type === 'INITIAL_PURCHASE' || type === 'RENEWAL' ? 'active' : 'expired';
-    const expiresAt = expiration_at_ms ? new Date(expiration_at_ms) : null;
+      if (current.plan === 'pro') {
+        return reply.send(current);
+      }
+      const status = await startTrial(user.id);
+      return reply.send(status);
+    },
+  );
 
-    await db
-      .update(subscriptions)
-      .set({ status, ...(expiresAt ? { expiresAt } : {}) })
-      .where(eq(subscriptions.rcCustomerId, app_user_id));
+  // POST /subscriptions/activate
+  fastify.post(
+    '/subscriptions/activate',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { user } = request;
+      await ensureProfileFromAuthUser({ id: user.id, email: user.email, user_metadata: user.user_metadata });
+      const status = await upgradeToPro(user.id);
+      return reply.send(status);
+    },
+  );
 
-    // users.plan도 동기화
-    const sub = await db.query.subscriptions.findFirst({
-      where: eq(subscriptions.rcCustomerId, app_user_id),
-    });
-    if (sub) {
-      await db
-        .update(users)
-        .set({ plan: status === 'active' ? 'pro' : 'free' })
-        .where(eq(users.id, sub.userId));
-    }
+  // POST /subscriptions/webhook
+  fastify.post<{ Body: RevenueCatWebhookBody }>(
+    '/subscriptions/webhook',
+    async (request, reply) => {
+      const event = request.body;
+      const eventType: string = event?.event?.type ?? '';
+      const userId: string | undefined =
+        event?.event?.app_user_id ??
+        event?.event?.original_app_user_id ??
+        event?.app_user_id;
 
-    return reply.status(200).send({ ok: true });
-  });
+      fastify.log.info({ eventType, userId }, 'RevenueCat webhook received');
 
-  app.get('/status', auth, async (req) => {
-    const { userId } = req.user as { userId: string };
-    const sub = await db.query.subscriptions.findFirst({
-      where: eq(subscriptions.userId, userId),
-    });
-    return sub ?? { status: 'inactive' };
-  });
+      if (!userId) {
+        return reply.code(400).send({ error: 'missing user id' });
+      }
+
+      const activateEvents = ['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION', 'NON_RENEWING_PURCHASE'];
+      const deactivateEvents = ['CANCELLATION', 'EXPIRATION', 'BILLING_ISSUE'];
+
+      if (activateEvents.includes(eventType)) {
+        await upgradeToPro(userId);
+        fastify.log.info({ userId }, 'Plan upgraded to PRO');
+      } else if (deactivateEvents.includes(eventType)) {
+        await downgradePlan(userId, 'free');
+        fastify.log.info({ userId }, 'Plan downgraded to free');
+      }
+
+      return reply.code(200).send({ received: true });
+    },
+  );
 }
