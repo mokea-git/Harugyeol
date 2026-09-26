@@ -69,7 +69,17 @@ async function start() {
 
   server.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 
-  await initSchema();
+  try {
+    await initSchema();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ECONNREFUSED') {
+      console.error(
+        '[DB] PostgreSQL 연결이 거부되었습니다. POSTGRES_URL의 서버가 실행 중인지 확인하세요. ' +
+          '로컬 설정: harugyeol-server/LOCAL_DEVELOPMENT.md',
+      );
+    }
+    throw err;
+  }
 
   await server.register(analysesRoutes);
   await server.register(coachRoutes);

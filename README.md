@@ -22,6 +22,9 @@ flutter run
 ```
 
 ### 백엔드 서버
+
+PostgreSQL을 먼저 준비하고 `POSTGRES_URL`을 설정하세요. [로컬 개발 안내](harugyeol-server/LOCAL_DEVELOPMENT.md)를 참고하세요.
+
 ```bash
 cd harugyeol-server
 npm ci
